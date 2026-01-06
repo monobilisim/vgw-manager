@@ -1,0 +1,15 @@
+# vgw-manager configuration example
+# Copy this file to /etc/vgw-manager.yaml or pass via --config flag
+
+# VersityGW Admin Credentials
+adminAccess: "changeme-access"
+adminSecret: "changeme-secret"
+
+# VersityGW Endpoint
+endpointURL: "http://localhost:7070"
+region: "us-east-1"
+
+# Paths
+usersJSONPath: "/tank/s3/accounts/users.json"
+zfsPoolBase: "tank/s3/buckets"
+mountBase: "/tank/s3/buckets"
