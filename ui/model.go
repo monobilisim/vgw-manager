@@ -27,6 +27,7 @@ const (
 	ProvisionView
 	UpdateUserView
 	MakeBucketPublicView
+	ConfirmView
 )
 
 // Model represents the main application state
@@ -65,6 +66,10 @@ type Model struct {
 	// Messages
 	errorMessage   string
 	successMessage string
+
+	// Confirmation
+	pendingAction string // e.g., "delete_user", "delete_bucket", "make_public", "make_private"
+	pendingTarget string // The name/access key of the item
 }
 
 // NewModel creates a new application model
@@ -223,70 +228,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				idx := m.page*m.pageSize + m.cursor
 				if idx < len(m.users) {
 					user := m.users[idx]
-					if err := m.versitygwService.DeleteUser(user.Access); err != nil {
-						m.errorMessage = fmt.Sprintf("Failed to delete user: %v", err)
-					} else {
-						m.successMessage = fmt.Sprintf("User '%s' deleted", user.Access)
-						// Reload users logic
-						users, err := m.userService.ListUsers()
-						if err == nil {
-							m.users = users
-							if len(m.users) == 0 {
-								m.page = 0
-								m.cursor = 0
-							} else {
-								newMaxPage := (len(m.users) - 1) / m.pageSize
-								if m.page > newMaxPage {
-									m.page = newMaxPage
-									m.cursor = 0
-								}
-								itemsOnPage := m.pageSize
-								if m.page == newMaxPage {
-									itemsOnPage = len(m.users) - (m.page * m.pageSize)
-								}
-								if itemsOnPage <= 0 {
-									if m.page > 0 {
-										m.page--
-										m.cursor = 0
-									} else {
-										m.cursor = 0
-									}
-								} else if m.cursor >= itemsOnPage {
-									m.cursor = itemsOnPage - 1
-								}
-								if m.cursor < 0 {
-									m.cursor = 0
-								}
-							}
-						}
-					}
+					m.pendingAction = "delete_user"
+					m.pendingTarget = user.Access
+					m.returnView = UsersListView
+					m.currentView = ConfirmView
 				}
 			} else if m.currentView == BucketsListView && len(m.buckets) > 0 {
 				idx := m.page*m.pageSize + m.cursor
 				if idx < len(m.buckets) {
 					bucket := m.buckets[idx]
-					// Validation: Check if bucket is not empty
-					// Use ZFS for deletion (more reliable for manager app)
-					if err := m.bucketService.DeleteBucket(bucket.Name); err != nil {
-						if strings.Contains(err.Error(), "dataset is busy") || strings.Contains(err.Error(), "not empty") {
-							m.errorMessage = fmt.Sprintf("Cannot delete bucket '%s': Bucket is not empty or busy.", bucket.Name)
-						} else {
-							m.errorMessage = fmt.Sprintf("Failed to delete bucket: %v", err)
-						}
-					} else {
-						m.successMessage = fmt.Sprintf("Bucket '%s' deleted.", bucket.Name)
-						// Reload buckets logic
-						m.currentView = MainMenuView
-						m.cursor = 1 // List Buckets
-						newM, cmd := m.handleEnter()
-
-						model, ok := newM.(Model)
-						if ok {
-							m = model
-							m.successMessage = fmt.Sprintf("Bucket '%s' deleted.", bucket.Name) // Restore success msg
-						}
-						return m, cmd
-					}
+					m.pendingAction = "delete_bucket"
+					m.pendingTarget = bucket.Name
+					m.returnView = BucketsListView
+					m.currentView = ConfirmView
 				}
 			}
 
@@ -308,44 +262,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				idx := m.page*m.pageSize + m.cursor
 				if idx < len(m.buckets) {
 					bucket := m.buckets[idx]
-
-					// Check if policy already exists
-					_, err := m.versitygwService.GetBucketPolicy(bucket.Name)
-					if err == nil {
-						m.errorMessage = fmt.Sprintf("Bucket '%s' is already PUBLIC (or has policy). Use 'P' to make private.", bucket.Name)
-					} else if !strings.Contains(err.Error(), "404") && !strings.Contains(err.Error(), "NoSuchBucketPolicy") {
-						// If error is NOT 404, it's a real error (e.g. 403, 500)
-						m.errorMessage = fmt.Sprintf("Failed to check policy status: %v", err)
-					} else {
-						// Policy not found (404), proceed to Make Public
-						owner := bucket.Owner
-						// If owner is missing/unknown or "root" (which causes policy issues), default to bucket name
-						// User requested to default to bucket name as "root" is often returned incorrectly or is not the target access key.
-						if owner == "" || owner == "unknown" || owner == "root" {
-							owner = bucket.Name
-						}
-
-						// Automatic mode (try with derived owner)
-						policy := services.GeneratePublicPolicy(bucket.Name, owner)
-						if err := m.versitygwService.SetBucketPolicy(bucket.Name, policy); err != nil {
-							// If automatic fails, redirect to form
-							m.initMakePublicForm()
-							m.bucketFormInputs[0].SetValue(bucket.Name)
-							m.bucketFormInputs[1].SetValue(owner) // Pre-fill failing owner
-							m.bucketFormInputs[1].Focus()
-							m.focusIndex = 1
-							m.currentView = MakeBucketPublicView
-							m.returnView = BucketsListView
-							// Show a shortened error message
-							errMsg := fmt.Sprintf("%v", err)
-							if len(errMsg) > 50 {
-								errMsg = errMsg[:47] + "..."
-							}
-							m.errorMessage = "Auto-public failed: " + errMsg
-						} else {
-							m.successMessage = fmt.Sprintf("Bucket '%s' is now PUBLIC!", bucket.Name)
-						}
-					}
+					m.pendingAction = "make_public"
+					m.pendingTarget = bucket.Name
+					m.returnView = BucketsListView
+					m.currentView = ConfirmView
 				}
 			}
 
@@ -355,32 +275,165 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				idx := m.page*m.pageSize + m.cursor
 				if idx < len(m.buckets) {
 					bucket := m.buckets[idx]
-
-					// Check if policy exists first
-					_, err := m.versitygwService.GetBucketPolicy(bucket.Name)
-					if err != nil {
-						// If error is 404/NoSuchBucketPolicy, it's already private
-						if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "NoSuchBucketPolicy") {
-							// We treat this as success/info
-							m.successMessage = fmt.Sprintf("Bucket '%s' is already PRIVATE (no policy).", bucket.Name)
-						} else {
-							// Real error
-							m.errorMessage = fmt.Sprintf("Failed to check policy: %v", err)
-						}
-					} else {
-						// Policy exists, delete it
-						if err := m.versitygwService.DeleteBucketPolicy(bucket.Name); err != nil {
-							m.errorMessage = fmt.Sprintf("Failed to make private: %v", err)
-						} else {
-							m.successMessage = fmt.Sprintf("Bucket '%s' is now PRIVATE (policy removed).", bucket.Name)
-						}
-					}
+					m.pendingAction = "make_private"
+					m.pendingTarget = bucket.Name
+					m.returnView = BucketsListView
+					m.currentView = ConfirmView
 				}
+			}
+
+		case "y", "Y":
+			if m.currentView == ConfirmView {
+				return m.executeConfirmedAction()
+			}
+
+		case "n", "N":
+			if m.currentView == ConfirmView {
+				m.pendingAction = ""
+				m.pendingTarget = ""
+				m.currentView = m.returnView
+				m.successMessage = "Operation cancelled."
 			}
 
 		}
 	}
 
+	return m, nil
+}
+
+// executeConfirmedAction performs the pending action after confirmation
+func (m Model) executeConfirmedAction() (tea.Model, tea.Cmd) {
+	switch m.pendingAction {
+	case "delete_user":
+		if err := m.versitygwService.DeleteUser(m.pendingTarget); err != nil {
+			m.errorMessage = fmt.Sprintf("Failed to delete user: %v", err)
+		} else {
+			m.successMessage = fmt.Sprintf("User '%s' deleted", m.pendingTarget)
+			users, err := m.userService.ListUsers()
+			if err == nil {
+				m.users = users
+				if len(m.users) == 0 {
+					m.page = 0
+					m.cursor = 0
+				} else {
+					newMaxPage := (len(m.users) - 1) / m.pageSize
+					if m.page > newMaxPage {
+						m.page = newMaxPage
+						m.cursor = 0
+					}
+					itemsOnPage := m.pageSize
+					if m.page == newMaxPage {
+						itemsOnPage = len(m.users) - (m.page * m.pageSize)
+					}
+					if itemsOnPage <= 0 {
+						if m.page > 0 {
+							m.page--
+							m.cursor = 0
+						} else {
+							m.cursor = 0
+						}
+					} else if m.cursor >= itemsOnPage {
+						m.cursor = itemsOnPage - 1
+					}
+					if m.cursor < 0 {
+						m.cursor = 0
+					}
+				}
+			}
+		}
+
+	case "delete_bucket":
+		if err := m.bucketService.DeleteBucket(m.pendingTarget); err != nil {
+			if strings.Contains(err.Error(), "dataset is busy") || strings.Contains(err.Error(), "not empty") {
+				m.errorMessage = fmt.Sprintf("Cannot delete bucket '%s': Bucket is not empty or busy.", m.pendingTarget)
+			} else {
+				m.errorMessage = fmt.Sprintf("Failed to delete bucket: %v", err)
+			}
+		} else {
+			m.successMessage = fmt.Sprintf("Bucket '%s' deleted.", m.pendingTarget)
+			// Reload buckets
+			m.currentView = MainMenuView
+			m.cursor = 1
+			newM, cmd := m.handleEnter()
+			model, ok := newM.(Model)
+			if ok {
+				m = model
+				m.successMessage = fmt.Sprintf("Bucket '%s' deleted.", m.pendingTarget)
+			}
+			m.pendingAction = ""
+			m.pendingTarget = ""
+			return m, cmd
+		}
+
+	case "make_public":
+		// Find the bucket to get owner
+		var bucket models.Bucket
+		found := false
+		for _, b := range m.buckets {
+			if b.Name == m.pendingTarget {
+				bucket = b
+				found = true
+				break
+			}
+		}
+		if !found {
+			m.errorMessage = fmt.Sprintf("Bucket '%s' not found.", m.pendingTarget)
+			break
+		}
+
+		// Check if policy already exists
+		_, err := m.versitygwService.GetBucketPolicy(bucket.Name)
+		if err == nil {
+			m.errorMessage = fmt.Sprintf("Bucket '%s' is already PUBLIC (or has policy). Use 'P' to make private.", bucket.Name)
+		} else if !strings.Contains(err.Error(), "404") && !strings.Contains(err.Error(), "NoSuchBucketPolicy") {
+			m.errorMessage = fmt.Sprintf("Failed to check policy status: %v", err)
+		} else {
+			owner := bucket.Owner
+			if owner == "" || owner == "unknown" || owner == "root" {
+				owner = bucket.Name
+			}
+			policy := services.GeneratePublicPolicy(bucket.Name, owner)
+			if err := m.versitygwService.SetBucketPolicy(bucket.Name, policy); err != nil {
+				m.initMakePublicForm()
+				m.bucketFormInputs[0].SetValue(bucket.Name)
+				m.bucketFormInputs[1].SetValue(owner)
+				m.bucketFormInputs[1].Focus()
+				m.focusIndex = 1
+				m.currentView = MakeBucketPublicView
+				m.returnView = BucketsListView
+				errMsg := fmt.Sprintf("%v", err)
+				if len(errMsg) > 50 {
+					errMsg = errMsg[:47] + "..."
+				}
+				m.errorMessage = "Auto-public failed: " + errMsg
+				m.pendingAction = ""
+				m.pendingTarget = ""
+				return m, nil
+			} else {
+				m.successMessage = fmt.Sprintf("Bucket '%s' is now PUBLIC!", bucket.Name)
+			}
+		}
+
+	case "make_private":
+		_, err := m.versitygwService.GetBucketPolicy(m.pendingTarget)
+		if err != nil {
+			if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "NoSuchBucketPolicy") {
+				m.successMessage = fmt.Sprintf("Bucket '%s' is already PRIVATE (no policy).", m.pendingTarget)
+			} else {
+				m.errorMessage = fmt.Sprintf("Failed to check policy: %v", err)
+			}
+		} else {
+			if err := m.versitygwService.DeleteBucketPolicy(m.pendingTarget); err != nil {
+				m.errorMessage = fmt.Sprintf("Failed to make private: %v", err)
+			} else {
+				m.successMessage = fmt.Sprintf("Bucket '%s' is now PRIVATE (policy removed).", m.pendingTarget)
+			}
+		}
+	}
+
+	m.pendingAction = ""
+	m.pendingTarget = ""
+	m.currentView = m.returnView
 	return m, nil
 }
 
@@ -568,6 +621,8 @@ func (m Model) View() string {
 		return m.renderCreateUserForm() // Reuse create form style for now
 	case MakeBucketPublicView:
 		return m.renderMakePublicForm()
+	case ConfirmView:
+		return m.renderConfirmView()
 	default:
 		return "Unknown view"
 	}

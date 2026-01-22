@@ -344,3 +344,41 @@ func truncate(s string, maxLen int) string {
 	}
 	return s[:maxLen-3] + "..."
 }
+
+// renderConfirmView renders the confirmation dialog
+func (m Model) renderConfirmView() string {
+	var s strings.Builder
+
+	// Title
+	title := titleStyle.Render("Confirm Action")
+	s.WriteString(title + "\n\n")
+
+	// Action description
+	var actionDesc string
+	switch m.pendingAction {
+	case "delete_user":
+		actionDesc = fmt.Sprintf("Delete user '%s'?", m.pendingTarget)
+	case "delete_bucket":
+		actionDesc = fmt.Sprintf("Delete bucket '%s'?", m.pendingTarget)
+	case "make_public":
+		actionDesc = fmt.Sprintf("Make bucket '%s' PUBLIC?", m.pendingTarget)
+	case "make_private":
+		actionDesc = fmt.Sprintf("Make bucket '%s' PRIVATE?", m.pendingTarget)
+	default:
+		actionDesc = "Perform this action?"
+	}
+
+	// Warning style for the question
+	warning := errorStyle.Render("⚠ " + actionDesc)
+	s.WriteString(warning + "\n\n")
+
+	// Options
+	s.WriteString(selectedMenuItemStyle.Render("y") + " - Yes, proceed\n")
+	s.WriteString(selectedMenuItemStyle.Render("n") + " - No, cancel\n")
+
+	// Help
+	help := helpStyle.Render("Press 'y' to confirm or 'n' to cancel")
+	s.WriteString("\n" + help)
+
+	return s.String()
+}
