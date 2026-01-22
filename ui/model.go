@@ -343,27 +343,38 @@ func (m Model) executeConfirmedAction() (tea.Model, tea.Cmd) {
 		}
 
 	case "delete_bucket":
-		if err := m.bucketService.DeleteBucket(m.pendingTarget); err != nil {
+		successMessage := ""
+		err := m.bucketService.DeleteBucket(m.pendingTarget)
+		if err != nil {
 			if strings.Contains(err.Error(), "dataset is busy") || strings.Contains(err.Error(), "not empty") {
 				m.errorMessage = fmt.Sprintf("Cannot delete bucket '%s': Bucket is not empty or busy.", m.pendingTarget)
-			} else {
-				m.errorMessage = fmt.Sprintf("Failed to delete bucket: %v", err)
+				break
 			}
+			if apiErr := m.versitygwService.DeleteBucket(m.pendingTarget); apiErr != nil {
+				m.errorMessage = fmt.Sprintf("Failed to delete bucket: ZFS(%v) API(%v)", err, apiErr)
+				break
+			}
+			successMessage = fmt.Sprintf("Bucket '%s' deleted (via API).", m.pendingTarget)
 		} else {
-			m.successMessage = fmt.Sprintf("Bucket '%s' deleted.", m.pendingTarget)
-			// Reload buckets
-			m.currentView = MainMenuView
-			m.cursor = 1
-			newM, cmd := m.handleEnter()
-			model, ok := newM.(Model)
-			if ok {
-				m = model
-				m.successMessage = fmt.Sprintf("Bucket '%s' deleted.", m.pendingTarget)
+			if apiErr := m.versitygwService.DeleteBucket(m.pendingTarget); apiErr != nil {
+				m.errorMessage = fmt.Sprintf("ZFS deleted but API delete failed: %v", apiErr)
+				break
 			}
-			m.pendingAction = ""
-			m.pendingTarget = ""
-			return m, cmd
+			successMessage = fmt.Sprintf("Bucket '%s' deleted.", m.pendingTarget)
 		}
+
+		// Reload buckets
+		m.currentView = MainMenuView
+		m.cursor = 1
+		newM, cmd := m.handleEnter()
+		model, ok := newM.(Model)
+		if ok {
+			m = model
+			m.successMessage = successMessage
+		}
+		m.pendingAction = ""
+		m.pendingTarget = ""
+		return m, cmd
 
 	case "make_public":
 		// Find the bucket to get owner

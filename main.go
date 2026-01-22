@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/omertahaoztop/vgw-manager/config"
@@ -17,13 +18,32 @@ import (
 	"github.com/omertahaoztop/vgw-manager/ui"
 )
 
+var version = "dev"
+
 func main() {
+	if len(os.Args) > 1 && strings.EqualFold(os.Args[1], "update") {
+		latestVersion, updated, err := services.SelfUpdate(version)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Update failed: %v\n", err)
+			os.Exit(1)
+		}
+		if updated {
+			fmt.Printf("Updated to %s. Please re-run the command.\n", latestVersion)
+		} else {
+			fmt.Printf("Already up to date (%s).\n", latestVersion)
+		}
+		return
+	}
+
 	exe := filepath.Base(os.Args[0])
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [flags]\n\n", exe)
 		fmt.Fprintln(flag.CommandLine.Output(), "Operations:")
 		fmt.Fprintln(flag.CommandLine.Output(), "  --list-users          List all users and exit")
 		fmt.Fprintln(flag.CommandLine.Output(), "  --list-buckets        List all buckets and exit")
+		fmt.Fprintln(flag.CommandLine.Output(), "  update               Update the binary to the latest release and exit")
+		fmt.Fprintln(flag.CommandLine.Output(), "  --update              Update the binary to the latest release and exit")
+		fmt.Fprintln(flag.CommandLine.Output(), "  --version             Print version and exit")
 		fmt.Fprintln(flag.CommandLine.Output(), "  --provision           Create user + bucket + set owner without launching the TUI")
 		fmt.Fprintln(flag.CommandLine.Output(), "                         (use with --access, --role, --bucket, --quota, optional --secret/--owner/--uid/--gid/--project-id)")
 		fmt.Fprintln(flag.CommandLine.Output(), "  --config <path>       Path to YAML config file (default: /etc/vgw-manager.yaml)")
@@ -38,6 +58,8 @@ func main() {
 	// Operations
 	listUsers := flag.Bool("list-users", false, "List all users and exit")
 	listBuckets := flag.Bool("list-buckets", false, "List all buckets and exit")
+	selfUpdate := flag.Bool("update", false, "Update the binary to the latest release and exit")
+	showVersion := flag.Bool("version", false, "Print version and exit")
 	provisionAll := flag.Bool("provision", false, "Create a user, create a bucket, and set the bucket owner")
 	createUser := flag.Bool("create-user", false, "Create a new user")
 	createBucket := flag.Bool("create-bucket", false, "Create a new bucket")
@@ -60,6 +82,25 @@ func main() {
 
 	jsonOutput := flag.Bool("json", false, "Output in JSON format")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("vgw-manager %s\n", version)
+		return
+	}
+
+	if *selfUpdate {
+		latestVersion, updated, err := services.SelfUpdate(version)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Self-update failed: %v\n", err)
+			os.Exit(1)
+		}
+		if updated {
+			fmt.Printf("Updated to %s. Please re-run the command.\n", latestVersion)
+		} else {
+			fmt.Printf("Already up to date (%s).\n", latestVersion)
+		}
+		return
+	}
 
 	if err := config.Load(*configPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
