@@ -1,14 +1,11 @@
 package main
 
 import (
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -189,22 +186,12 @@ func main() {
 			os.Exit(1)
 		}
 
-		// Try ZFS delete first
-		err := bucketService.DeleteBucket(*bucketName)
+		via, err := services.DeleteBucketWithFallback(*bucketName)
 		if err != nil {
-			// Check if it's an API-only bucket (ZFS dataset missing)
-			// A simple string check or error type check would be ideal, but for now we fallback
-			fmt.Fprintf(os.Stderr, "ZFS delete failed (%v), attempting API delete...\n", err)
-
-			if apiErr := vgwService.DeleteBucket(*bucketName); apiErr != nil {
-				fmt.Fprintf(os.Stderr, "Error deleting bucket (API): %v\n", apiErr)
-				os.Exit(1)
-			}
-			fmt.Printf("Bucket '%s' deleted (via API).\n", *bucketName)
-			return
+			fmt.Fprintf(os.Stderr, "Error deleting bucket: %v\n", err)
+			os.Exit(1)
 		}
-
-		fmt.Printf("Bucket '%s' deleted (via ZFS).\n", *bucketName)
+		fmt.Printf("Bucket '%s' deleted (via %s).\n", *bucketName, via)
 		return
 	}
 
@@ -227,19 +214,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		// We need an owner for the policy. Try to fetch it.
-		owner := *bucketOwner
-		if owner == "" {
-			var err error
-			owner, err = vgwService.GetBucketOwner(*bucketName)
-			if err != nil || owner == "" {
-				fmt.Fprintf(os.Stderr, "Error resolving owner for policy generation. Please specify --owner explicitly.\n")
-				os.Exit(1)
-			}
-		}
-
-		policy := services.GeneratePublicPolicy(*bucketName, owner)
-		if err := vgwService.SetBucketPolicy(*bucketName, policy); err != nil {
+		if err := services.MakeBucketPublic(*bucketName, *bucketOwner); err != nil {
 			fmt.Fprintf(os.Stderr, "Error making bucket public: %v\n", err)
 			os.Exit(1)
 		}
@@ -261,7 +236,7 @@ func main() {
 	}
 
 	if *provisionAll {
-		cfg := provisionConfig{
+		req := services.ProvisionRequest{
 			Access:    *accessKey,
 			Secret:    *secretKey,
 			Role:      *role,
@@ -273,7 +248,7 @@ func main() {
 			Owner:     *bucketOwner,
 		}
 
-		summary, err := runProvision(cfg)
+		summary, err := services.Provision(req)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error provisioning user/bucket: %v\n", err)
 			os.Exit(1)
@@ -316,77 +291,11 @@ func main() {
 	}
 
 	if *listBuckets {
-		bucketService := services.NewBucketService()
-		buckets, err := bucketService.ListBuckets()
-		// If ZFS list fails, we still might be able to get API buckets
+		buckets, err := services.ListMergedBuckets()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Error listing ZFS buckets: %v\n", err)
-			buckets = []models.Bucket{}
-		}
-
-		// Try to get API buckets
-		versityGWService := services.NewVersityGWService()
-		apiBuckets, apiErr := versityGWService.ListBuckets()
-		if apiErr == nil {
-			// Create map for fast lookup of ZFS buckets
-			zfsMap := make(map[string]*models.Bucket)
-			for i := range buckets {
-				zfsMap[buckets[i].Name] = &buckets[i]
-			}
-
-			// Create map for API info
-			apiMap := make(map[string]services.BucketInfo)
-			for _, b := range apiBuckets {
-				apiMap[b.Name] = b
-			}
-
-			// Update existing ZFS buckets with owner info
-			for i := range buckets {
-				if info, ok := apiMap[buckets[i].Name]; ok {
-					if info.Owner != "" {
-						buckets[i].Owner = info.Owner
-					}
-				}
-
-				// Fetch TRUE owner from ACL
-				trueOwner, err := versityGWService.GetBucketOwner(buckets[i].Name)
-				if err == nil && trueOwner != "" {
-					buckets[i].Owner = trueOwner
-				}
-			}
-
-			// Add buckets that exist in API but NOT in ZFS
-			for _, apiBucket := range apiBuckets {
-				if _, exists := zfsMap[apiBucket.Name]; !exists {
-					// Create placeholder bucket
-					newBucket := models.Bucket{
-						Name:       apiBucket.Name,
-						Mountpoint: "-",
-						Quota:      "-",
-						Used:       "-",
-						Available:  "-",
-						Owner:      apiBucket.Owner,
-					}
-
-					// Try to fetch true owner
-					trueOwner, err := versityGWService.GetBucketOwner(apiBucket.Name)
-					if err == nil && trueOwner != "" {
-						newBucket.Owner = trueOwner
-					}
-
-					buckets = append(buckets, newBucket)
-				}
-			}
-		} else if err != nil {
-			// If both failed, then we have a real error
-			fmt.Fprintf(os.Stderr, "Error listing buckets: ZFS(%v) API(%v)\n", err, apiErr)
+			fmt.Fprintf(os.Stderr, "Error listing buckets: %v\n", err)
 			os.Exit(1)
 		}
-
-		// Sort merged list
-		sort.Slice(buckets, func(i, j int) bool {
-			return buckets[i].Name < buckets[j].Name
-		})
 
 		if *jsonOutput {
 			data, _ := json.MarshalIndent(buckets, "", "  ")
@@ -408,111 +317,4 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error running application: %v\n", err)
 		os.Exit(1)
 	}
-}
-
-type provisionConfig struct {
-	Access string
-	Secret string
-	Role   string
-
-	UserID    int
-	GroupID   int
-	ProjectID int
-
-	Bucket string
-	Quota  string
-	Owner  string
-}
-
-type provisionSummary struct {
-	Access string `json:"access"`
-	Secret string `json:"secret"`
-	Role   string `json:"role"`
-
-	UserID    int `json:"userID"`
-	GroupID   int `json:"groupID"`
-	ProjectID int `json:"projectID"`
-
-	Bucket string `json:"bucket"`
-	Quota  string `json:"quota"`
-	Owner  string `json:"owner"`
-
-	SecretGenerated bool `json:"secretGenerated"`
-}
-
-func runProvision(cfg provisionConfig) (provisionSummary, error) {
-	summary := provisionSummary{}
-
-	if cfg.Access == "" {
-		return summary, fmt.Errorf("access key is required (use --access)")
-	}
-	if cfg.Role != "admin" && cfg.Role != "user" && cfg.Role != "userplus" {
-		return summary, fmt.Errorf("role must be admin, user, or userplus")
-	}
-	if cfg.Bucket == "" {
-		return summary, fmt.Errorf("bucket name is required (use --bucket)")
-	}
-	if cfg.Quota == "" {
-		return summary, fmt.Errorf("quota is required (use --quota, e.g. 2T)")
-	}
-	if cfg.Owner == "" {
-		cfg.Owner = cfg.Access
-	}
-
-	secretGenerated := false
-	if cfg.Secret == "" {
-		cfg.Secret = generateSecretKey()
-		secretGenerated = true
-	}
-
-	vgwService := services.NewVersityGWService()
-	bucketService := services.NewBucketService()
-
-	userReq := models.UserCreateRequest{
-		Access:    cfg.Access,
-		Secret:    cfg.Secret,
-		Role:      cfg.Role,
-		UserID:    cfg.UserID,
-		GroupID:   cfg.GroupID,
-		ProjectID: cfg.ProjectID,
-	}
-
-	if err := vgwService.CreateUser(userReq); err != nil {
-		return summary, fmt.Errorf("failed to create user: %w", err)
-	}
-
-	bucketReq := models.BucketCreateRequest{
-		Name:  cfg.Bucket,
-		Quota: cfg.Quota,
-		Owner: cfg.Owner,
-	}
-
-	if err := bucketService.CreateBucket(bucketReq); err != nil {
-		return summary, fmt.Errorf("failed to create bucket: %w", err)
-	}
-
-	if err := vgwService.ChangeBucketOwner(cfg.Bucket, cfg.Owner); err != nil {
-		return summary, fmt.Errorf("failed to set bucket owner: %w", err)
-	}
-
-	summary = provisionSummary{
-		Access:          cfg.Access,
-		Secret:          cfg.Secret,
-		Role:            cfg.Role,
-		UserID:          cfg.UserID,
-		GroupID:         cfg.GroupID,
-		ProjectID:       cfg.ProjectID,
-		Bucket:          cfg.Bucket,
-		Quota:           cfg.Quota,
-		Owner:           cfg.Owner,
-		SecretGenerated: secretGenerated,
-	}
-
-	return summary, nil
-}
-
-func generateSecretKey() string {
-	b := make([]byte, 48)
-	rand.Read(b)
-	return base64.StdEncoding.EncodeToString(b)
 }
