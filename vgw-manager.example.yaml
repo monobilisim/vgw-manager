@@ -13,3 +13,7 @@ region: "us-east-1"
 usersJSONPath: "/tank/s3/accounts/users.json"
 zfsPoolBase: "tank/s3/buckets"
 mountBase: "/tank/s3/buckets"
+
+# API Server
+apiListen: "127.0.0.1:8080"
+apiToken: "changeme-token"

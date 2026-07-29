@@ -17,6 +17,8 @@ type Config struct {
 	UsersJSONPath string `json:"usersJSONPath" yaml:"usersJSONPath"`
 	ZFSPoolBase   string `json:"zfsPoolBase" yaml:"zfsPoolBase"`
 	MountBase     string `json:"mountBase" yaml:"mountBase"`
+	APIListen     string `json:"apiListen" yaml:"apiListen"`
+	APIToken      string `json:"apiToken" yaml:"apiToken"`
 }
 
 var (
@@ -32,6 +34,7 @@ var (
 		UsersJSONPath: "/tank/s3/accounts/users.json",
 		ZFSPoolBase:   "tank/s3/buckets",
 		MountBase:     "/tank/s3/buckets",
+		APIListen:     "127.0.0.1:8080",
 	}
 
 	// Exported values used across the app (populated in init).
@@ -42,6 +45,8 @@ var (
 	UsersJSONPath string
 	ZFSPoolBase   string
 	MountBase     string
+	APIListen     string
+	APIToken      string
 )
 
 func init() {
@@ -84,6 +89,8 @@ func Load(configPath string) error {
 	UsersJSONPath = cfg.UsersJSONPath
 	ZFSPoolBase = cfg.ZFSPoolBase
 	MountBase = cfg.MountBase
+	APIListen = cfg.APIListen
+	APIToken = cfg.APIToken
 
 	return nil
 }
@@ -156,6 +163,12 @@ func loadFromFile(path string, base Config) (Config, error) {
 	if fileCfg.MountBase != "" {
 		base.MountBase = fileCfg.MountBase
 	}
+	if fileCfg.APIListen != "" {
+		base.APIListen = fileCfg.APIListen
+	}
+	if fileCfg.APIToken != "" {
+		base.APIToken = fileCfg.APIToken
+	}
 
 	return base, nil
 }
@@ -181,6 +194,12 @@ func applyEnv(base Config) Config {
 	}
 	if v := os.Getenv("VGW_MOUNT_BASE"); v != "" {
 		base.MountBase = v
+	}
+	if v := os.Getenv("VGW_API_LISTEN"); v != "" {
+		base.APIListen = v
+	}
+	if v := os.Getenv("VGW_API_TOKEN"); v != "" {
+		base.APIToken = v
 	}
 	return base
 }

@@ -1,14 +1,21 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log/slog"
+	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/omertahaoztop/vgw-manager/api"
 	"github.com/omertahaoztop/vgw-manager/config"
 	"github.com/omertahaoztop/vgw-manager/models"
 	"github.com/omertahaoztop/vgw-manager/services"
@@ -44,6 +51,8 @@ func main() {
 		fmt.Fprintln(flag.CommandLine.Output(), "  --provision           Create user + bucket + set owner without launching the TUI")
 		fmt.Fprintln(flag.CommandLine.Output(), "                         (use with --access, --role, --bucket, --quota, optional --secret/--owner/--uid/--gid/--project-id)")
 		fmt.Fprintln(flag.CommandLine.Output(), "  --config <path>       Path to YAML config file (default: /etc/vgw-manager.yaml)")
+		fmt.Fprintln(flag.CommandLine.Output(), "  --serve                Start HTTP API server instead of TUI")
+		fmt.Fprintln(flag.CommandLine.Output(), "  --listen <addr>        Listen address for API server (default: 127.0.0.1:8080)")
 		fmt.Fprintln(flag.CommandLine.Output(), "  (no flags)            Launch the interactive TUI")
 		fmt.Fprintln(flag.CommandLine.Output(), "\nFlags:")
 		flag.PrintDefaults()
@@ -78,6 +87,8 @@ func main() {
 	bucketOwner := flag.String("owner", "", "Bucket owner access key")
 
 	jsonOutput := flag.Bool("json", false, "Output in JSON format")
+	serve := flag.Bool("serve", false, "Start HTTP API server instead of TUI")
+	listenAddr := flag.String("listen", "", "Listen address for API server")
 	flag.Parse()
 
 	if *showVersion {
@@ -107,6 +118,45 @@ func main() {
 	// Initialize Services
 	vgwService := services.NewVersityGWService()
 	bucketService := services.NewBucketService()
+
+	if *serve {
+		if config.APIToken == "" {
+			fmt.Fprintln(os.Stderr, "Error: apiToken is required when serving the API (set apiToken in config or VGW_API_TOKEN env). This service runs as root and writes to ZFS.")
+			os.Exit(1)
+		}
+
+		addr := *listenAddr
+		if addr == "" {
+			addr = config.APIListen
+		}
+		if addr == "" {
+			addr = "127.0.0.1:8080"
+		}
+
+		srv := api.NewServer(version)
+		srv.Addr = addr
+
+		go func() {
+			slog.Info("API server listening", "addr", addr)
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				slog.Error("API server failed", "error", err)
+				os.Exit(1)
+			}
+		}()
+
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		<-ctx.Done()
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			slog.Error("API server shutdown failed", "error", err)
+			os.Exit(1)
+		}
+		slog.Info("API server stopped")
+		return
+	}
 
 	// Handle Operations
 

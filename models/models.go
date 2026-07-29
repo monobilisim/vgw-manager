@@ -17,12 +17,12 @@ type UsersJSON struct {
 
 // Bucket represents a ZFS bucket with quota and owner information
 type Bucket struct {
-	Name       string
-	Mountpoint string
-	Quota      string
-	Used       string
-	Available  string
-	Owner      string
+	Name       string `json:"name"`
+	Mountpoint string `json:"mountpoint"`
+	Quota      string `json:"quota"`
+	Used       string `json:"used"`
+	Available  string `json:"available"`
+	Owner      string `json:"owner"`
 }
 
 // BucketCreateRequest represents the data needed to create a new bucket
