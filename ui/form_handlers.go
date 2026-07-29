@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/omertahaoztop/vgw-manager/models"
+	"github.com/monobilisim/vgw-manager/models"
 )
 
 // updateUserForm handles key events for the user creation form

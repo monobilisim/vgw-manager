@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/omertahaoztop/vgw-manager/services"
+	"github.com/monobilisim/vgw-manager/services"
 )
 
 // handleProvision creates a user, a bucket, and sets the bucket owner in one call.

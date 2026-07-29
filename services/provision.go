@@ -5,7 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 
-	"github.com/omertahaoztop/vgw-manager/models"
+	"github.com/monobilisim/vgw-manager/models"
 )
 
 // ProvisionRequest holds the parameters for provisioning a user and bucket.

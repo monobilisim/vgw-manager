@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/omertahaoztop/vgw-manager/models"
+	"github.com/monobilisim/vgw-manager/models"
 )
 
 // ListMergedBuckets returns a merged list of ZFS and API buckets, sorted by name.

@@ -10,8 +10,8 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/omertahaoztop/vgw-manager/models"
-	"github.com/omertahaoztop/vgw-manager/services"
+	"github.com/monobilisim/vgw-manager/models"
+	"github.com/monobilisim/vgw-manager/services"
 )
 
 // initUserForm initializes the user creation form

@@ -4,8 +4,8 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/omertahaoztop/vgw-manager/models"
-	"github.com/omertahaoztop/vgw-manager/services"
+	"github.com/monobilisim/vgw-manager/models"
+	"github.com/monobilisim/vgw-manager/services"
 )
 
 // Validation errors.

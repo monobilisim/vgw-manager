@@ -6,8 +6,8 @@ import (
 	"os"
 	"sort"
 
-	"github.com/omertahaoztop/vgw-manager/config"
-	"github.com/omertahaoztop/vgw-manager/models"
+	"github.com/monobilisim/vgw-manager/config"
+	"github.com/monobilisim/vgw-manager/models"
 )
 
 // UserService handles user-related operations

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/omertahaoztop/vgw-manager/config"
+	"github.com/monobilisim/vgw-manager/config"
 )
 
 // mu serializes all mutating operations (ZFS and users.json are not safe

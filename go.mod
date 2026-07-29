@@ -1,4 +1,4 @@
-module github.com/omertahaoztop/vgw-manager
+module github.com/monobilisim/vgw-manager
 
 go 1.25.1
 

@@ -15,11 +15,11 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/omertahaoztop/vgw-manager/api"
-	"github.com/omertahaoztop/vgw-manager/config"
-	"github.com/omertahaoztop/vgw-manager/models"
-	"github.com/omertahaoztop/vgw-manager/services"
-	"github.com/omertahaoztop/vgw-manager/ui"
+	"github.com/monobilisim/vgw-manager/api"
+	"github.com/monobilisim/vgw-manager/config"
+	"github.com/monobilisim/vgw-manager/models"
+	"github.com/monobilisim/vgw-manager/services"
+	"github.com/monobilisim/vgw-manager/ui"
 )
 
 var version = "dev"

@@ -12,8 +12,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
-	"github.com/omertahaoztop/vgw-manager/config"
-	"github.com/omertahaoztop/vgw-manager/models"
+	"github.com/monobilisim/vgw-manager/config"
+	"github.com/monobilisim/vgw-manager/models"
 )
 
 // VersityGWService handles VersityGW admin API operations
