@@ -100,6 +100,8 @@ mountBase: "/tank/s3/buckets"
 | `VGW_ENDPOINT_URL` | VersityGW Endpoint URL |
 | `VGW_ZFS_POOL_BASE` | Base ZFS pool/dataset for buckets (e.g., `tank/s3`) |
 | `VGW_USERS_JSON_PATH` | Path to `users.json` for read operations |
+| `VGW_API_LISTEN` | API server listen address (default: `127.0.0.1:8080`) |
+| `VGW_API_TOKEN` | Bearer token for API authentication (required for `--serve`) |
 
 ## Usage
 
@@ -176,6 +178,123 @@ vgw-manager --list-buckets --json
 # Provision User & Bucket
 vgw-manager --provision --access "bob" --bucket "bob-data" --quota "500G"
 ```
+
+### API Server
+
+Run with `--serve` to start the HTTP API server:
+
+```bash
+vgw-manager --serve
+```
+
+**Configuration**: `apiToken` is required in the config file (or the `VGW_API_TOKEN` environment variable). The server refuses to start without it. `apiListen` defaults to `127.0.0.1:8080`.
+
+#### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/healthz` | Health check (no auth) |
+| GET | `/v1/buckets` | List all buckets |
+| POST | `/v1/buckets` | Create a bucket |
+| DELETE | `/v1/buckets/{name}` | Delete a bucket |
+| POST | `/v1/buckets/{name}/public` | Make bucket public |
+| POST | `/v1/buckets/{name}/private` | Make bucket private |
+| GET | `/v1/users` | List all users |
+| GET | `/v1/users/{access}` | Get a single user |
+| POST | `/v1/users` | Create a user |
+| DELETE | `/v1/users/{access}` | Delete a user |
+| POST | `/v1/provision` | Provision user + bucket + owner |
+
+#### Examples
+
+```bash
+# Health check
+curl http://127.0.0.1:8080/healthz
+
+# List buckets
+curl -H "Authorization: Bearer $VGW_API_TOKEN" http://127.0.0.1:8080/v1/buckets
+
+# Create bucket
+curl -X POST -H "Authorization: Bearer $VGW_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"my-bucket","quota":"1T","owner":"alice"}' \
+  http://127.0.0.1:8080/v1/buckets
+
+# Delete bucket
+curl -X DELETE -H "Authorization: Bearer $VGW_API_TOKEN" \
+  http://127.0.0.1:8080/v1/buckets/my-bucket
+
+# Make bucket public
+curl -X POST -H "Authorization: Bearer $VGW_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"owner":"alice"}' \
+  http://127.0.0.1:8080/v1/buckets/my-bucket/public
+
+# Make bucket private
+curl -X POST -H "Authorization: Bearer $VGW_API_TOKEN" \
+  http://127.0.0.1:8080/v1/buckets/my-bucket/private
+
+# List users (secrets masked)
+curl -H "Authorization: Bearer $VGW_API_TOKEN" http://127.0.0.1:8080/v1/users
+
+# List users (show secrets)
+curl -H "Authorization: Bearer $VGW_API_TOKEN" \
+  "http://127.0.0.1:8080/v1/users?showSecrets=true"
+
+# Get single user
+curl -H "Authorization: Bearer $VGW_API_TOKEN" \
+  http://127.0.0.1:8080/v1/users/alice
+
+# Create user
+curl -X POST -H "Authorization: Bearer $VGW_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"access":"alice","secret":"secret123","role":"user"}' \
+  http://127.0.0.1:8080/v1/users
+
+# Delete user
+curl -X DELETE -H "Authorization: Bearer $VGW_API_TOKEN" \
+  http://127.0.0.1:8080/v1/users/alice
+
+# Provision user + bucket
+curl -X POST -H "Authorization: Bearer $VGW_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"access":"bob","role":"user","bucket":"bob-data","quota":"500G"}' \
+  http://127.0.0.1:8080/v1/provision
+```
+
+#### Example Responses
+
+```json
+// GET /v1/buckets
+[
+  {
+    "name": "my-bucket",
+    "mountpoint": "/tank/s3/buckets/my-bucket",
+    "quota": "1T",
+    "used": "100G",
+    "available": "900G",
+    "owner": "alice"
+  }
+]
+```
+
+```json
+// POST /v1/provision
+{
+  "access": "bob",
+  "secret": "auto-generated-secret",
+  "role": "user",
+  "userID": 0,
+  "groupID": 0,
+  "projectID": 0,
+  "bucket": "bob-data",
+  "quota": "500G",
+  "owner": "bob",
+  "secretGenerated": true
+}
+```
+
+**Note**: Secrets are masked with `***` by default. Pass `?showSecrets=true` to reveal actual secret values.
 
 ## License
 

@@ -1,0 +1,14 @@
+[Unit]
+Description=vgw-manager API Server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/vgw-manager --serve
+Restart=on-failure
+# Must run as root: the service manages ZFS datasets which require root privileges
+User=root
+EnvironmentFile=-/etc/default/vgw-manager
+
+[Install]
+WantedBy=multi-user.target
