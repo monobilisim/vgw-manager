@@ -23,6 +23,7 @@ type Bucket struct {
 	Used       string `json:"used"`
 	Available  string `json:"available"`
 	Owner      string `json:"owner"`
+	Public     bool   `json:"public"`
 }
 
 // BucketCreateRequest represents the data needed to create a new bucket

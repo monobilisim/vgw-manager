@@ -273,7 +273,8 @@ curl -X POST -H "Authorization: Bearer $VGW_API_TOKEN" \
     "quota": "1T",
     "used": "100G",
     "available": "900G",
-    "owner": "alice"
+    "owner": "alice",
+    "public": false
   }
 ]
 ```

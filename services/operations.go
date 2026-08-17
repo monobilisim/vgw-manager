@@ -3,6 +3,7 @@ package services
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/monobilisim/vgw-manager/models"
 )
@@ -10,7 +11,7 @@ import (
 // ListMergedBuckets returns a merged list of ZFS and API buckets, sorted by name.
 // ZFS buckets are enriched with real owner info from the VersityGW API (via ACL).
 // Buckets that exist only in the API are added as placeholders.
-// Returns an error only when both ZFS and API listing fail.
+// Returns an error when both listings fail or a bucket policy cannot be read.
 func ListMergedBuckets() ([]models.Bucket, error) {
 	bucketService := NewBucketService()
 	vgwService := NewVersityGWService()
@@ -47,6 +48,11 @@ func ListMergedBuckets() ([]models.Bucket, error) {
 			if err == nil && trueOwner != "" {
 				buckets[i].Owner = trueOwner
 			}
+
+			buckets[i].Public, err = bucketIsPublic(vgwService, buckets[i].Name)
+			if err != nil {
+				return nil, fmt.Errorf("checking bucket %q policy: %w", buckets[i].Name, err)
+			}
 		}
 
 		// Add buckets that exist in API but NOT in ZFS
@@ -66,6 +72,11 @@ func ListMergedBuckets() ([]models.Bucket, error) {
 					newBucket.Owner = trueOwner
 				}
 
+				newBucket.Public, err = bucketIsPublic(vgwService, apiBucket.Name)
+				if err != nil {
+					return nil, fmt.Errorf("checking bucket %q policy: %w", apiBucket.Name, err)
+				}
+
 				buckets = append(buckets, newBucket)
 			}
 		}
@@ -79,6 +90,19 @@ func ListMergedBuckets() ([]models.Bucket, error) {
 	})
 
 	return buckets, nil
+}
+
+// bucketIsPublic reports whether a bucket has a policy. A missing policy is
+// the expected private-bucket state; other errors must not be hidden.
+func bucketIsPublic(vgwService *VersityGWService, name string) (bool, error) {
+	_, err := vgwService.GetBucketPolicy(name)
+	if err == nil {
+		return true, nil
+	}
+	if strings.Contains(err.Error(), "API error (status 404)") {
+		return false, nil
+	}
+	return false, err
 }
 
 // DeleteBucketWithFallback tries ZFS deletion first, then falls back to API deletion.
