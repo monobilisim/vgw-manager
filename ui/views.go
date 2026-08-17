@@ -171,10 +171,10 @@ func (m Model) renderBucketsList() string {
 	}
 
 	// Header (Matched to previous preferred layout)
-	// Name (30) | Mountpoint (40) | Quota (10) | Used (10) | Avail (10) | Owner (15)
-	header := fmt.Sprintf("  %-30s %-40s %-10s %-10s %-10s %-15s", "Name", "Mountpoint", "Quota", "Used", "Available", "Owner")
+	// Name (30) | Mountpoint (40) | Quota (10) | Used (10) | Avail (10) | Owner (15) | Public (8)
+	header := fmt.Sprintf("  %-30s %-40s %-10s %-10s %-10s %-15s %-8s", "Name", "Mountpoint", "Quota", "Used", "Available", "Owner", "Public")
 	s.WriteString(dimStyle.Render(header) + "\n")
-	s.WriteString(dimStyle.Render(strings.Repeat("-", 125)) + "\n")
+	s.WriteString(dimStyle.Render(strings.Repeat("-", 134)) + "\n")
 
 	for i := start; i < end; i++ {
 		bucket := m.buckets[i]
@@ -197,8 +197,13 @@ func (m Model) renderBucketsList() string {
 			return str
 		}
 
+		visibility := "Private"
+		if bucket.Public {
+			visibility = "Public"
+		}
+
 		// Row content
-		line := fmt.Sprintf("%s %-30s %-40s %-10s %-10s %-10s %-15s",
+		line := fmt.Sprintf("%s %-30s %-40s %-10s %-10s %-10s %-15s %-8s",
 			cursor,
 			trunc(bucket.Name, 30),
 			trunc(bucket.Mountpoint, 40),
@@ -206,6 +211,7 @@ func (m Model) renderBucketsList() string {
 			bucket.Used,      // Assuming bucket.Used is already formatted or a string
 			bucket.Available, // Available is already formatted string from service? Let's check service. Assuming yes or string.
 			owner,
+			visibility,
 		)
 
 		if m.cursor == (i - start) {
@@ -309,6 +315,13 @@ func (m Model) renderBucketDetail() string {
 
 	s.WriteString(tableHeaderStyle.Render("Owner") + "\n")
 	s.WriteString(tableCellStyle.Render(bucket.Owner) + "\n\n")
+
+	visibility := "Private"
+	if bucket.Public {
+		visibility = "Public"
+	}
+	s.WriteString(tableHeaderStyle.Render("Visibility") + "\n")
+	s.WriteString(tableCellStyle.Render(visibility) + "\n\n")
 
 	s.WriteString(tableHeaderStyle.Render("Quota") + "\n")
 	s.WriteString(tableCellStyle.Render(bucket.Quota) + "\n\n")

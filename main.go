@@ -351,11 +351,15 @@ func main() {
 			data, _ := json.MarshalIndent(buckets, "", "  ")
 			fmt.Println(string(data))
 		} else {
-			fmt.Printf("%-30s %-20s %-15s %-15s %-15s\n", "NAME", "OWNER", "QUOTA", "USED", "AVAILABLE")
-			fmt.Println("─────────────────────────────────────────────────────────────────────────────────────────────────")
+			fmt.Printf("%-30s %-20s %-8s %-15s %-15s %-15s\n", "NAME", "OWNER", "PUBLIC", "QUOTA", "USED", "AVAILABLE")
+			fmt.Println("────────────────────────────────────────────────────────────────────────────────────────────────────────────")
 			for _, bucket := range buckets {
-				fmt.Printf("%-30s %-20s %-15s %-15s %-15s\n",
-					bucket.Name, bucket.Owner, bucket.Quota, bucket.Used, bucket.Available)
+				visibility := "Private"
+				if bucket.Public {
+					visibility = "Public"
+				}
+				fmt.Printf("%-30s %-20s %-8s %-15s %-15s %-15s\n",
+					bucket.Name, bucket.Owner, visibility, bucket.Quota, bucket.Used, bucket.Available)
 			}
 		}
 		return
