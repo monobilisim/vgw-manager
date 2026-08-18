@@ -1,6 +1,7 @@
 package services
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -92,17 +93,68 @@ func ListMergedBuckets() ([]models.Bucket, error) {
 	return buckets, nil
 }
 
-// bucketIsPublic reports whether a bucket has a policy. A missing policy is
-// the expected private-bucket state; other errors must not be hidden.
+type bucketPolicy struct {
+	Statements []bucketPolicyStatement `json:"Statement"`
+}
+
+type bucketPolicyStatement struct {
+	Principal json.RawMessage `json:"Principal"`
+}
+
+// bucketIsPublic reports whether a bucket policy grants access to everyone.
+// A missing policy or a policy limited to named principals is private.
 func bucketIsPublic(vgwService *VersityGWService, name string) (bool, error) {
-	_, err := vgwService.GetBucketPolicy(name)
+	policy, err := vgwService.GetBucketPolicy(name)
 	if err == nil {
-		return true, nil
+		return policyGrantsPublicAccess(policy)
 	}
 	if strings.Contains(err.Error(), "API error (status 404)") {
 		return false, nil
 	}
 	return false, err
+}
+
+func policyGrantsPublicAccess(policy string) (bool, error) {
+	var document bucketPolicy
+	if err := json.Unmarshal([]byte(policy), &document); err != nil {
+		return false, fmt.Errorf("parsing bucket policy: %w", err)
+	}
+
+	for _, statement := range document.Statements {
+		var principal string
+		if json.Unmarshal(statement.Principal, &principal) == nil && principal == "*" {
+			return true, nil
+		}
+
+		var principals map[string]json.RawMessage
+		if json.Unmarshal(statement.Principal, &principals) == nil {
+			for _, value := range principals {
+				if json.Unmarshal(value, &principal) == nil && principal == "*" {
+					return true, nil
+				}
+
+				var values []string
+				if json.Unmarshal(value, &values) == nil {
+					for _, value := range values {
+						if value == "*" {
+							return true, nil
+						}
+					}
+				}
+			}
+		}
+
+		var principalList []string
+		if json.Unmarshal(statement.Principal, &principalList) == nil {
+			for _, principal := range principalList {
+				if principal == "*" {
+					return true, nil
+				}
+			}
+		}
+	}
+
+	return false, nil
 }
 
 // DeleteBucketWithFallback tries ZFS deletion first, then falls back to API deletion.
