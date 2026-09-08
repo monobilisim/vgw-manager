@@ -61,4 +61,3 @@ func handleNotFound(w http.ResponseWriter, r *http.Request) {
 	// registered patterns; this catches truly unknown paths.
 	writeError(w, http.StatusNotFound, errNotFound)
 }
-

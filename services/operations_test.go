@@ -1,6 +1,9 @@
 package services
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestPolicyGrantsPublicAccess(t *testing.T) {
 	tests := []struct {
@@ -51,5 +54,39 @@ func TestPolicyGrantsPublicAccess(t *testing.T) {
 				t.Fatalf("policyGrantsPublicAccess() = %v, want %v", public, tt.public)
 			}
 		})
+	}
+}
+
+func TestValidateBucketNameAndAccessKey(t *testing.T) {
+	badNames := []string{
+		"",
+		"../../etc",
+		"foo/bar",
+		"foo@snap",
+		"-option",
+		".hidden",
+		"trailingdot.",
+		"double..dot",
+		"UPPER",
+		"with space",
+		strings.Repeat("a", 64),
+	}
+	for _, name := range badNames {
+		if err := validateBucketName(name); err == nil {
+			t.Errorf("validateBucketName(%q) accepted invalid name", name)
+		}
+	}
+	if err := validateBucketName("my-bucket.1"); err != nil {
+		t.Errorf("validateBucketName rejected valid name: %v", err)
+	}
+
+	badKeys := []string{"", `quote"key`, "back\\slash", "ctrl\x01"}
+	for _, key := range badKeys {
+		if validAccessKey(key) {
+			t.Errorf("validAccessKey(%q) accepted invalid key", key)
+		}
+	}
+	if !validAccessKey("AKIAEXAMPLE123") {
+		t.Error("validAccessKey rejected valid key")
 	}
 }

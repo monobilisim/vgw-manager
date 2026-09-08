@@ -36,3 +36,6 @@ Thumbs.db
 
 # Secrets
 .env
+
+# Local agent session state
+.sisyphus/

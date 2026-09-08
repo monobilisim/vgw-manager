@@ -177,6 +177,10 @@ func DeleteBucketWithFallback(name string) (string, error) {
 // MakeBucketPublic resolves the bucket owner (if empty), generates a public
 // read policy, and applies it via the VersityGW API.
 func MakeBucketPublic(name, owner string) error {
+	if err := validateBucketName(name); err != nil {
+		return err
+	}
+
 	vgwService := NewVersityGWService()
 
 	if owner == "" {
@@ -187,7 +191,10 @@ func MakeBucketPublic(name, owner string) error {
 		}
 	}
 
-	policy := GeneratePublicPolicy(name, owner)
+	policy, err := GeneratePublicPolicy(name, owner)
+	if err != nil {
+		return err
+	}
 	if err := vgwService.SetBucketPolicy(name, policy); err != nil {
 		return fmt.Errorf("failed to make bucket public: %w", err)
 	}

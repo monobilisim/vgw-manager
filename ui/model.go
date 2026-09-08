@@ -403,7 +403,11 @@ func (m Model) executeConfirmedAction() (tea.Model, tea.Cmd) {
 			if owner == "" || owner == "unknown" || owner == "root" {
 				owner = bucket.Name
 			}
-			policy := services.GeneratePublicPolicy(bucket.Name, owner)
+			policy, err := services.GeneratePublicPolicy(bucket.Name, owner)
+			if err != nil {
+				m.errorMessage = fmt.Sprintf("Failed to make public: %v", err)
+				return m, nil
+			}
 			if err := m.versitygwService.SetBucketPolicy(bucket.Name, policy); err != nil {
 				m.initMakePublicForm()
 				m.bucketFormInputs[0].SetValue(bucket.Name)

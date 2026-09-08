@@ -1,6 +1,7 @@
 package services
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"sort"
@@ -9,6 +10,10 @@ import (
 	"github.com/monobilisim/vgw-manager/config"
 	"github.com/monobilisim/vgw-manager/models"
 )
+
+// ErrInvalidInput marks validation failures so the API layer can answer 400
+// instead of 500.
+var ErrInvalidInput = errors.New("invalid input")
 
 // BucketService handles bucket-related operations
 type BucketService struct{}
@@ -71,9 +76,51 @@ func (s *BucketService) ListBuckets() ([]models.Bucket, error) {
 	return buckets, nil
 }
 
+// validateBucketName guards every path that interpolates a name into zfs
+// arguments or signed URLs: "/" would escape the pool base, "@" names a
+// snapshot, and a leading "-" would be parsed as an option.
+func validateBucketName(name string) error {
+	if name == "" {
+		return fmt.Errorf("%w: bucket name is required", ErrInvalidInput)
+	}
+	if len(name) > 63 {
+		return fmt.Errorf("%w: bucket name is too long (max 63)", ErrInvalidInput)
+	}
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '.':
+		default:
+			return fmt.Errorf("%w: bucket name may only contain lowercase letters, digits, dots, and hyphens", ErrInvalidInput)
+		}
+	}
+	if strings.HasPrefix(name, "-") || strings.HasPrefix(name, ".") ||
+		strings.HasSuffix(name, ".") || strings.Contains(name, "..") {
+		return fmt.Errorf("%w: bucket name may only contain lowercase letters, digits, dots, and hyphens", ErrInvalidInput)
+	}
+	return nil
+}
+
+// validAccessKey reports whether s is safe to interpolate into bucket
+// policy JSON: printable, no quotes or backslashes that could break out of
+// the string literal.
+func validAccessKey(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < 0x20 || r > 0x7e || r == '"' || r == '\\' {
+			return false
+		}
+	}
+	return true
+}
+
 // CreateBucket creates a new ZFS bucket with specified quota.
 // Ownership is handled separately via the change-bucket-owner API.
 func (s *BucketService) CreateBucket(req models.BucketCreateRequest) error {
+	if err := validateBucketName(req.Name); err != nil {
+		return err
+	}
 	if req.Mountpoint == "" {
 		req.Mountpoint = fmt.Sprintf("%s/%s", config.MountBase, req.Name)
 	}
@@ -87,7 +134,7 @@ func (s *BucketService) CreateBucket(req models.BucketCreateRequest) error {
 		args = append(args, "-o", fmt.Sprintf("quota=%s", req.Quota))
 	}
 
-	args = append(args, zfsPath)
+	args = append(args, "--", zfsPath)
 
 	cmd := exec.Command("zfs", args...)
 	output, err := cmd.CombinedOutput()
@@ -100,10 +147,13 @@ func (s *BucketService) CreateBucket(req models.BucketCreateRequest) error {
 
 // DeleteBucket deletes a ZFS bucket using zfs destroy
 func (s *BucketService) DeleteBucket(name string) error {
+	if err := validateBucketName(name); err != nil {
+		return err
+	}
 	zfsPath := fmt.Sprintf("%s/%s", config.ZFSPoolBase, name)
 
 	// zfs destroy -r ensures snapshots/clones are also removed if standard
-	cmd := exec.Command("zfs", "destroy", "-r", zfsPath)
+	cmd := exec.Command("zfs", "destroy", "-r", "--", zfsPath)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to delete ZFS bucket: %w (output: %s)", err, string(output))

@@ -799,9 +799,12 @@ func (m Model) handleMakePublic() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	policy := services.GeneratePublicPolicy(bucketName, owner)
-	err := m.versitygwService.SetBucketPolicy(bucketName, policy)
+	policy, err := services.GeneratePublicPolicy(bucketName, owner)
 	if err != nil {
+		m.errorMessage = fmt.Sprintf("Failed to make public: %v", err)
+		return m, nil
+	}
+	if err := m.versitygwService.SetBucketPolicy(bucketName, policy); err != nil {
 		m.errorMessage = fmt.Sprintf("Failed to make public: %v", err)
 		return m, nil
 	}

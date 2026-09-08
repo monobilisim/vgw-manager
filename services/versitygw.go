@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -26,6 +28,23 @@ func NewVersityGWService() *VersityGWService {
 	return &VersityGWService{
 		client: &http.Client{Timeout: 30 * time.Second},
 	}
+}
+
+// buildURL joins the endpoint with an admin path and URL-encodes query
+// parameters, so values containing "&", "=", "#", or spaces cannot alter
+// the signed request.
+func buildURL(path string, params map[string]string) string {
+	u, err := url.Parse(config.EndpointURL)
+	if err != nil {
+		return config.EndpointURL + path
+	}
+	u.Path = strings.TrimSuffix(u.Path, "/") + path
+	q := url.Values{}
+	for k, v := range params {
+		q.Set(k, v)
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // Account represents a VersityGW account (matching the versitygw auth.Account structure)
@@ -83,7 +102,7 @@ func (s *VersityGWService) UpdateUser(req models.UserUpdateRequest) error {
 		return fmt.Errorf("failed to marshal user data: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/update-user?access=%s", config.EndpointURL, req.Access)
+	url := buildURL("/update-user", map[string]string{"access": req.Access})
 	httpReq, err := http.NewRequest(http.MethodPatch, url, bytes.NewBuffer(accxml))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
@@ -98,7 +117,7 @@ func (s *VersityGWService) UpdateUser(req models.UserUpdateRequest) error {
 
 // DeleteUser deletes a user via VersityGW admin API
 func (s *VersityGWService) DeleteUser(access string) error {
-	url := fmt.Sprintf("%s/delete-user?access=%s", config.EndpointURL, access)
+	url := buildURL("/delete-user", map[string]string{"access": access})
 	httpReq, err := http.NewRequest(http.MethodPatch, url, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
@@ -148,7 +167,13 @@ func (s *VersityGWService) signAndSend(httpReq *http.Request, payload []byte) ([
 
 // ChangeBucketOwner changes the owner of a bucket
 func (s *VersityGWService) ChangeBucketOwner(bucket, owner string) error {
-	url := fmt.Sprintf("%s/change-bucket-owner/?bucket=%s&owner=%s", config.EndpointURL, bucket, owner)
+	if err := validateBucketName(bucket); err != nil {
+		return err
+	}
+	if !validAccessKey(owner) {
+		return fmt.Errorf("%w: invalid owner access key", ErrInvalidInput)
+	}
+	url := buildURL("/change-bucket-owner/", map[string]string{"bucket": bucket, "owner": owner})
 	httpReq, err := http.NewRequest(http.MethodPatch, url, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
@@ -188,6 +213,9 @@ func (s *VersityGWService) ChangeBucketOwner(bucket, owner string) error {
 
 // SetBucketPolicy sets the S3 bucket policy
 func (s *VersityGWService) SetBucketPolicy(bucket string, policy string) error {
+	if err := validateBucketName(bucket); err != nil {
+		return err
+	}
 	// S3 PutBucketPolicy: PUT /<bucket>?policy
 	// Body: policy JSON
 	url := fmt.Sprintf("%s/%s?policy", config.EndpointURL, bucket)
@@ -203,8 +231,17 @@ func (s *VersityGWService) SetBucketPolicy(bucket string, policy string) error {
 	return nil
 }
 
-// GeneratePublicPolicy generates a bucket policy for public read access and owner full access
-func GeneratePublicPolicy(bucket, owner string) string {
+// GeneratePublicPolicy generates a bucket policy for public read access and
+// owner full access. Inputs are validated because they are interpolated into
+// a JSON document: a quote in the owner key would allow injecting arbitrary
+// policy statements.
+func GeneratePublicPolicy(bucket, owner string) (string, error) {
+	if err := validateBucketName(bucket); err != nil {
+		return "", err
+	}
+	if !validAccessKey(owner) {
+		return "", fmt.Errorf("%w: invalid owner access key", ErrInvalidInput)
+	}
 	return fmt.Sprintf(`{
     "Version": "2012-10-17",
     "Statement": [
@@ -237,11 +274,14 @@ func GeneratePublicPolicy(bucket, owner string) string {
             ]
         }
     ]
-}`, bucket, owner, bucket, bucket)
+}`, bucket, owner, bucket, bucket), nil
 }
 
 // DeleteBucketPolicy deletes the policy of a bucket (making it private)
 func (s *VersityGWService) DeleteBucketPolicy(bucket string) error {
+	if err := validateBucketName(bucket); err != nil {
+		return err
+	}
 	url := fmt.Sprintf("%s/%s?policy", config.EndpointURL, bucket)
 	httpReq, err := http.NewRequest(http.MethodDelete, url, nil)
 	if err != nil {
@@ -257,6 +297,9 @@ func (s *VersityGWService) DeleteBucketPolicy(bucket string) error {
 
 // DeleteBucket deletes a bucket (must be empty)
 func (s *VersityGWService) DeleteBucket(bucket string) error {
+	if err := validateBucketName(bucket); err != nil {
+		return err
+	}
 	url := fmt.Sprintf("%s/%s", config.EndpointURL, bucket)
 	httpReq, err := http.NewRequest(http.MethodDelete, url, nil)
 	if err != nil {
