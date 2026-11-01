@@ -19,6 +19,8 @@ type Config struct {
 	MountBase     string `json:"mountBase" yaml:"mountBase"`
 	APIListen     string `json:"apiListen" yaml:"apiListen"`
 	APIToken      string `json:"apiToken" yaml:"apiToken"`
+	// APIAllowRemote permits a non-loopback apiListen on a trusted network.
+	APIAllowRemote bool `json:"apiAllowRemote" yaml:"apiAllowRemote"`
 }
 
 var (
@@ -36,15 +38,16 @@ var (
 	}
 
 	// Exported values used across the app (populated by Load).
-	AdminAccess   string
-	AdminSecret   string
-	EndpointURL   string
-	Region        string
-	UsersJSONPath string
-	ZFSPoolBase   string
-	MountBase     string
-	APIListen     string
-	APIToken      string
+	AdminAccess    string
+	AdminSecret    string
+	EndpointURL    string
+	Region         string
+	UsersJSONPath  string
+	ZFSPoolBase    string
+	MountBase      string
+	APIListen      string
+	APIToken       string
+	APIAllowRemote bool
 )
 
 // Load applies configuration from the provided path, environment variables, and defaults.
@@ -83,6 +86,7 @@ func Load(configPath string) error {
 	ZFSPoolBase = cfg.ZFSPoolBase
 	MountBase = cfg.MountBase
 	APIListen = cfg.APIListen
+	APIAllowRemote = cfg.APIAllowRemote
 	APIToken = cfg.APIToken
 
 	return nil
@@ -161,6 +165,9 @@ func loadFromFile(path string, base Config) (Config, error) {
 	}
 	if fileCfg.APIListen != "" {
 		base.APIListen = fileCfg.APIListen
+	}
+	if fileCfg.APIAllowRemote {
+		base.APIAllowRemote = true
 	}
 	if fileCfg.APIToken != "" {
 		base.APIToken = fileCfg.APIToken
