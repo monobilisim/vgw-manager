@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/monobilisim/vgw-manager/models"
@@ -40,18 +41,9 @@ func handleCreateBucket(w http.ResponseWriter, r *http.Request) {
 		Quota: req.Quota,
 		Owner: req.Owner,
 	}
-	bucketService := services.NewBucketService()
-	if err := bucketService.CreateBucket(bucketReq); err != nil {
+	if err := services.CreateBucketWithOwner(bucketReq); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
-	}
-
-	if req.Owner != "" {
-		vgwService := services.NewVersityGWService()
-		if err := vgwService.ChangeBucketOwner(req.Name, req.Owner); err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]string{
@@ -61,7 +53,7 @@ func handleCreateBucket(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleDeleteBucket deletes a bucket, trying ZFS first then API.
+// handleDeleteBucket deletes an empty bucket; non-empty buckets get 409.
 func handleDeleteBucket(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if name == "" {
@@ -69,7 +61,15 @@ func handleDeleteBucket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	via, err := services.DeleteBucketWithFallback(name)
+	via, err := services.RemoveBucket(name)
+	if errors.Is(err, services.ErrBucketNotEmpty) {
+		writeError(w, http.StatusConflict, services.ErrBucketNotEmpty)
+		return
+	}
+	if services.IsNotFound(err) {
+		writeError(w, http.StatusNotFound, errNotFound)
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -94,8 +94,9 @@ func handleMakePublic(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req makePublicRequest
-	// Body is optional; ignore decode errors (empty body is fine).
-	_ = decodeJSON(w, r, &req)
+	if !decodeJSON(w, r, &req) {
+		return
+	}
 
 	if err := services.MakeBucketPublic(name, req.Owner); err != nil {
 		writeError(w, http.StatusInternalServerError, err)

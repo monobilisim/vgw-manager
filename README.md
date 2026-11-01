@@ -187,7 +187,9 @@ Run with `--serve` to start the HTTP API server:
 vgw-manager --serve
 ```
 
-**Configuration**: `apiToken` is required in the config file (or the `VGW_API_TOKEN` environment variable). The server refuses to start without it. `apiListen` defaults to `127.0.0.1:8080`.
+**Configuration**: `apiToken` is required in the config file (or the `VGW_API_TOKEN` environment variable) and must be at least 32 characters (e.g. `openssl rand -hex 32`). The server refuses to start without it. `apiListen` defaults to `127.0.0.1:8080` and must be a loopback address: the API is plain HTTP, so put a TLS reverse proxy in front for remote access.
+
+**Bucket deletion** only removes empty buckets. A ZFS dataset is destroyed only when it is mounted, its directory holds nothing but `.sgwtmp`, and it has no snapshots (`zfs destroy` runs without `-r`). Non-empty buckets return `409 Conflict`.
 
 #### Endpoints
 

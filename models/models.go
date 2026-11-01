@@ -44,12 +44,10 @@ type UserCreateRequest struct {
 	ProjectID int
 }
 
-// UserUpdateRequest represents the data needed to update an existing user
+// UserUpdateRequest represents a secret and/or role change for an existing user.
+// Empty fields are left unchanged on the gateway.
 type UserUpdateRequest struct {
-	Access    string
-	Secret    string
-	Role      string
-	UserID    int
-	GroupID   int
-	ProjectID int
+	Access string
+	Secret string
+	Role   string
 }

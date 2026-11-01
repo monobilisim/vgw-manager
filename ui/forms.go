@@ -1,8 +1,6 @@
 package ui
 
 import (
-	"crypto/rand"
-	"encoding/base64"
 	"fmt"
 	"strconv"
 	"strings"
@@ -30,7 +28,7 @@ func (m *Model) initUserForm() {
 	inputs[1].Placeholder = "Secret Key (auto-generated)"
 	inputs[1].CharLimit = 128
 	inputs[1].Width = 60
-	inputs[1].SetValue(generateSecretKey())
+	inputs[1].SetValue(services.GenerateSecretKey())
 
 	// Role
 	inputs[2] = textinput.New()
@@ -141,7 +139,7 @@ func (m *Model) initProvisionForm() {
 	inputs[1].Placeholder = "Secret Key (auto-generated if empty)"
 	inputs[1].CharLimit = 128
 	inputs[1].Width = 60
-	inputs[1].SetValue(generateSecretKey())
+	inputs[1].SetValue(services.GenerateSecretKey())
 
 	// Role
 	inputs[2] = textinput.New()
@@ -410,20 +408,9 @@ func (m Model) handleCreateBucket() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Create bucket
-	err := m.bucketService.CreateBucket(req)
-	if err != nil {
+	if err := services.CreateBucketWithOwner(req); err != nil {
 		m.errorMessage = fmt.Sprintf("Failed to create bucket: %v", err)
 		return m, nil
-	}
-
-	// If owner is specified, change bucket owner
-	if req.Owner != "" {
-		err = m.versitygwService.ChangeBucketOwner(req.Name, req.Owner)
-		if err != nil {
-			m.errorMessage = fmt.Sprintf("Bucket created but failed to set owner: %v", err)
-			return m, nil
-		}
 	}
 
 	m.successMessage = fmt.Sprintf("Bucket '%s' created successfully!", req.Name)
@@ -479,30 +466,6 @@ func (m Model) handleProvision() (tea.Model, tea.Cmd) {
 	quota := strings.TrimSpace(m.provisionFormInputs[7].Value())
 	owner := strings.TrimSpace(m.provisionFormInputs[8].Value())
 
-	// Defaults and validation
-	if access == "" {
-		m.errorMessage = "Access key is required"
-		return m, nil
-	}
-	if role != "admin" && role != "user" && role != "userplus" {
-		m.errorMessage = "Role must be admin, user, or userplus"
-		return m, nil
-	}
-	if bucket == "" {
-		m.errorMessage = "Bucket name is required"
-		return m, nil
-	}
-	if quota == "" {
-		m.errorMessage = "Quota is required"
-		return m, nil
-	}
-	if owner == "" {
-		owner = access
-	}
-	if secret == "" {
-		secret = generateSecretKey()
-	}
-
 	parseInt := func(val string) (int, error) {
 		if val == "" {
 			return 0, nil
@@ -526,37 +489,23 @@ func (m Model) handleProvision() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	userReq := models.UserCreateRequest{
+	summary, err := services.Provision(services.ProvisionRequest{
 		Access:    access,
 		Secret:    secret,
 		Role:      role,
 		UserID:    uid,
 		GroupID:   gid,
 		ProjectID: pid,
-	}
-
-	if err := m.versitygwService.CreateUser(userReq); err != nil {
-		m.errorMessage = fmt.Sprintf("Failed to create user: %v", err)
+		Bucket:    bucket,
+		Quota:     quota,
+		Owner:     owner,
+	})
+	if err != nil {
+		m.errorMessage = fmt.Sprintf("Failed to provision: %v", err)
 		return m, nil
 	}
 
-	bucketReq := models.BucketCreateRequest{
-		Name:  bucket,
-		Quota: quota,
-		Owner: owner,
-	}
-
-	if err := m.bucketService.CreateBucket(bucketReq); err != nil {
-		m.errorMessage = fmt.Sprintf("Failed to create bucket: %v", err)
-		return m, nil
-	}
-
-	if err := m.versitygwService.ChangeBucketOwner(bucket, owner); err != nil {
-		m.errorMessage = fmt.Sprintf("Bucket created but failed to set owner: %v", err)
-		return m, nil
-	}
-
-	m.successMessage = fmt.Sprintf("Provisioned user '%s' and bucket '%s' (owner '%s')", access, bucket, owner)
+	m.successMessage = fmt.Sprintf("Provisioned user '%s' and bucket '%s' (owner '%s')", summary.Access, summary.Bucket, summary.Owner)
 	m.currentView = m.returnView
 	m.cursor = 0
 
@@ -685,20 +634,6 @@ func (m Model) clampProvisionScroll(lines []string) Model {
 	return m
 }
 
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-// generateSecretKey generates a random secret key
-func generateSecretKey() string {
-	b := make([]byte, 48)
-	rand.Read(b)
-	return base64.StdEncoding.EncodeToString(b)
-}
-
 // initMakePublicForm initializes the make public form
 func (m *Model) initMakePublicForm() {
 	m.bucketFormInputs = make([]textinput.Model, 2)
@@ -794,17 +729,7 @@ func (m Model) handleMakePublic() (tea.Model, tea.Cmd) {
 		m.errorMessage = "Bucket name is required"
 		return m, nil
 	}
-	if owner == "" {
-		m.errorMessage = "Owner access key is required"
-		return m, nil
-	}
-
-	policy, err := services.GeneratePublicPolicy(bucketName, owner)
-	if err != nil {
-		m.errorMessage = fmt.Sprintf("Failed to make public: %v", err)
-		return m, nil
-	}
-	if err := m.versitygwService.SetBucketPolicy(bucketName, policy); err != nil {
+	if err := services.MakeBucketPublic(bucketName, owner); err != nil {
 		m.errorMessage = fmt.Sprintf("Failed to make public: %v", err)
 		return m, nil
 	}

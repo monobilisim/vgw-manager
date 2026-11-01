@@ -159,12 +159,9 @@ func (m Model) handleCreateUser() (tea.Model, tea.Cmd) {
 
 	if m.currentView == UpdateUserView {
 		updateReq := models.UserUpdateRequest{
-			Access:    req.Access,
-			Secret:    req.Secret,
-			Role:      req.Role,
-			UserID:    req.UserID,
-			GroupID:   req.GroupID,
-			ProjectID: req.ProjectID,
+			Access: req.Access,
+			Secret: req.Secret,
+			Role:   req.Role,
 		}
 		if err := m.versitygwService.UpdateUser(updateReq); err != nil {
 			m.errorMessage = fmt.Sprintf("Failed to update user: %v", err)

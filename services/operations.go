@@ -2,9 +2,10 @@ package services
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"sort"
-	"strings"
 
 	"github.com/monobilisim/vgw-manager/models"
 )
@@ -108,7 +109,7 @@ func bucketIsPublic(vgwService *VersityGWService, name string) (bool, error) {
 	if err == nil {
 		return policyGrantsPublicAccess(policy)
 	}
-	if strings.Contains(err.Error(), "API error (status 404)") {
+	if IsNotFound(err) {
 		return false, nil
 	}
 	return false, err
@@ -157,21 +158,58 @@ func policyGrantsPublicAccess(policy string) (bool, error) {
 	return false, nil
 }
 
-// DeleteBucketWithFallback tries ZFS deletion first, then falls back to API deletion.
-// Returns the method used ("zfs" or "api") and any error.
-func DeleteBucketWithFallback(name string) (string, error) {
+// RemoveBucket deletes an empty bucket and returns where it lived ("zfs" or
+// "api"). Non-empty buckets fail with ErrBucketNotEmpty and are left intact.
+func RemoveBucket(name string) (string, error) {
+	if err := validateBucketName(name); err != nil {
+		return "", err
+	}
 	bucketService := NewBucketService()
-	err := bucketService.DeleteBucket(name)
-	if err == nil {
-		return "zfs", nil
+	vgwService := NewVersityGWService()
+
+	if _, err := bucketService.GetBucket(name); err != nil {
+		if !errors.Is(err, ErrBucketNotFound) {
+			return "", err
+		}
+		// Not a dataset here: VersityGW itself refuses non-empty buckets with 409.
+		if err := vgwService.DeleteBucket(name); err != nil {
+			if hasStatus(err, http.StatusConflict) {
+				return "", fmt.Errorf("%w: %w", ErrBucketNotEmpty, err)
+			}
+			return "", err
+		}
+		return "api", nil
 	}
 
-	// ZFS failed, try API
-	vgwService := NewVersityGWService()
-	if apiErr := vgwService.DeleteBucket(name); apiErr != nil {
-		return "", fmt.Errorf("ZFS: %v; API: %v", err, apiErr)
+	if err := bucketService.DeleteBucket(name); err != nil {
+		return "", err
 	}
-	return "api", nil
+	if err := vgwService.DeleteBucket(name); err != nil && !IsNotFound(err) {
+		return "", fmt.Errorf("ZFS dataset destroyed but API delete failed: %w", err)
+	}
+	return "zfs", nil
+}
+
+// CreateBucketWithOwner creates the ZFS dataset and assigns its owner; the
+// dataset is destroyed again when the owner cannot be set.
+func CreateBucketWithOwner(req models.BucketCreateRequest) error {
+	if req.Owner != "" && !validAccessKey(req.Owner) {
+		return fmt.Errorf("%w: invalid owner access key", ErrInvalidInput)
+	}
+	bucketService := NewBucketService()
+	if err := bucketService.CreateBucket(req); err != nil {
+		return err
+	}
+	if req.Owner == "" {
+		return nil
+	}
+	if err := NewVersityGWService().ChangeBucketOwner(req.Name, req.Owner); err != nil {
+		if rbErr := bucketService.DeleteBucket(req.Name); rbErr != nil {
+			return fmt.Errorf("failed to set bucket owner: %w (rollback failed, dataset %s left in place: %v)", err, req.Name, rbErr)
+		}
+		return fmt.Errorf("failed to set bucket owner, bucket creation rolled back: %w", err)
+	}
+	return nil
 }
 
 // MakeBucketPublic resolves the bucket owner (if empty), generates a public

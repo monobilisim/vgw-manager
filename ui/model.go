@@ -2,8 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"sort"
-	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -343,25 +341,12 @@ func (m Model) executeConfirmedAction() (tea.Model, tea.Cmd) {
 		}
 
 	case "delete_bucket":
-		successMessage := ""
-		err := m.bucketService.DeleteBucket(m.pendingTarget)
+		via, err := services.RemoveBucket(m.pendingTarget)
 		if err != nil {
-			if strings.Contains(err.Error(), "dataset is busy") || strings.Contains(err.Error(), "not empty") {
-				m.errorMessage = fmt.Sprintf("Cannot delete bucket '%s': Bucket is not empty or busy.", m.pendingTarget)
-				break
-			}
-			if apiErr := m.versitygwService.DeleteBucket(m.pendingTarget); apiErr != nil {
-				m.errorMessage = fmt.Sprintf("Failed to delete bucket: ZFS(%v) API(%v)", err, apiErr)
-				break
-			}
-			successMessage = fmt.Sprintf("Bucket '%s' deleted (via API).", m.pendingTarget)
-		} else {
-			if apiErr := m.versitygwService.DeleteBucket(m.pendingTarget); apiErr != nil {
-				m.errorMessage = fmt.Sprintf("ZFS deleted but API delete failed: %v", apiErr)
-				break
-			}
-			successMessage = fmt.Sprintf("Bucket '%s' deleted.", m.pendingTarget)
+			m.errorMessage = fmt.Sprintf("Failed to delete bucket '%s': %v", m.pendingTarget, err)
+			break
 		}
+		successMessage := fmt.Sprintf("Bucket '%s' deleted (via %s).", m.pendingTarget, via)
 
 		// Reload buckets
 		m.currentView = MainMenuView
@@ -396,19 +381,15 @@ func (m Model) executeConfirmedAction() (tea.Model, tea.Cmd) {
 		_, err := m.versitygwService.GetBucketPolicy(bucket.Name)
 		if err == nil {
 			m.errorMessage = fmt.Sprintf("Bucket '%s' is already PUBLIC (or has policy). Use 'P' to make private.", bucket.Name)
-		} else if !strings.Contains(err.Error(), "404") && !strings.Contains(err.Error(), "NoSuchBucketPolicy") {
+		} else if !services.IsNotFound(err) {
 			m.errorMessage = fmt.Sprintf("Failed to check policy status: %v", err)
 		} else {
+			// Placeholder owners are not access keys; let the service read the ACL owner.
 			owner := bucket.Owner
-			if owner == "" || owner == "unknown" || owner == "root" {
-				owner = bucket.Name
+			if owner == "-" || owner == "unknown" || owner == "root" {
+				owner = ""
 			}
-			policy, err := services.GeneratePublicPolicy(bucket.Name, owner)
-			if err != nil {
-				m.errorMessage = fmt.Sprintf("Failed to make public: %v", err)
-				return m, nil
-			}
-			if err := m.versitygwService.SetBucketPolicy(bucket.Name, policy); err != nil {
+			if err := services.MakeBucketPublic(bucket.Name, owner); err != nil {
 				m.initMakePublicForm()
 				m.bucketFormInputs[0].SetValue(bucket.Name)
 				m.bucketFormInputs[1].SetValue(owner)
@@ -432,7 +413,7 @@ func (m Model) executeConfirmedAction() (tea.Model, tea.Cmd) {
 	case "make_private":
 		_, err := m.versitygwService.GetBucketPolicy(m.pendingTarget)
 		if err != nil {
-			if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "NoSuchBucketPolicy") {
+			if services.IsNotFound(err) {
 				m.successMessage = fmt.Sprintf("Bucket '%s' is already PRIVATE (no policy).", m.pendingTarget)
 			} else {
 				m.errorMessage = fmt.Sprintf("Failed to check policy: %v", err)
@@ -469,75 +450,10 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			}
 
 		case 1: // List Buckets
-			// 1. Get ZFS buckets (source of truth for quotas/usage)
-			buckets, err := m.bucketService.ListBuckets()
+			buckets, err := services.ListMergedBuckets()
 			if err != nil {
-				m.errorMessage = fmt.Sprintf("Error loading buckets from ZFS: %v", err)
-				// Even if ZFS fails, we want to try showing API buckets
-				buckets = []models.Bucket{}
+				m.errorMessage = fmt.Sprintf("Error loading buckets: %v", err)
 			}
-
-			// 2. Try to get API buckets (source of truth for owners and missing ZFS buckets)
-			apiBuckets, apiErr := m.versitygwService.ListBuckets()
-			if apiErr == nil {
-				// Create map for fast lookup of ZFS buckets
-				zfsMap := make(map[string]*models.Bucket)
-				for i := range buckets {
-					zfsMap[buckets[i].Name] = &buckets[i]
-				}
-
-				// Create map for API info
-				apiMap := make(map[string]services.BucketInfo)
-				for _, b := range apiBuckets {
-					apiMap[b.Name] = b
-				}
-
-				// Update existing ZFS buckets with owner info
-				for i := range buckets {
-					if info, ok := apiMap[buckets[i].Name]; ok {
-						if info.Owner != "" {
-							buckets[i].Owner = info.Owner
-						}
-					}
-
-					// Fetch TRUE owner from ACL separately if needed (preserving existing logic)
-					trueOwner, err := m.versitygwService.GetBucketOwner(buckets[i].Name)
-					if err == nil && trueOwner != "" {
-						buckets[i].Owner = trueOwner
-					}
-				}
-
-				// Add buckets that exist in API but NOT in ZFS
-				for _, apiBucket := range apiBuckets {
-					if _, exists := zfsMap[apiBucket.Name]; !exists {
-						// Create placeholder bucket
-						newBucket := models.Bucket{
-							Name:       apiBucket.Name,
-							Mountpoint: "-",
-							Quota:      "-",
-							Used:       "-",
-							Available:  "-",
-							Owner:      apiBucket.Owner,
-						}
-
-						// Try to fetch true owner for these as well
-						trueOwner, err := m.versitygwService.GetBucketOwner(apiBucket.Name)
-						if err == nil && trueOwner != "" {
-							newBucket.Owner = trueOwner
-						}
-
-						buckets = append(buckets, newBucket)
-					}
-				}
-			} else if err != nil {
-				// If both failed, show error
-				m.errorMessage = fmt.Sprintf("Error loading buckets: ZFS(%v) API(%v)", err, apiErr)
-			}
-
-			// Sort merged list
-			sort.Slice(buckets, func(i, j int) bool {
-				return buckets[i].Name < buckets[j].Name
-			})
 
 			m.buckets = buckets
 			m.currentView = BucketsListView
