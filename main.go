@@ -132,9 +132,9 @@ func main() {
 		if addr == "" {
 			addr = "127.0.0.1:8080"
 		}
-		// The API speaks plain HTTP with a bearer token, so it must stay on loopback.
-		if host, _, err := net.SplitHostPort(addr); err != nil || (host != "localhost" && !net.ParseIP(host).IsLoopback()) {
-			fmt.Fprintf(os.Stderr, "Error: listen address %q is not a loopback address; the API has no TLS, put a TLS reverse proxy in front instead.\n", addr)
+		// The API speaks plain HTTP with a bearer token, so remote listening needs an explicit opt-in.
+		if host, _, err := net.SplitHostPort(addr); err != nil || (!config.APIAllowRemote && host != "localhost" && !net.ParseIP(host).IsLoopback()) {
+			fmt.Fprintf(os.Stderr, "Error: listen address %q is not a loopback address; the API has no TLS, put a TLS reverse proxy in front or set apiAllowRemote: true for a trusted network.\n", addr)
 			os.Exit(1)
 		}
 

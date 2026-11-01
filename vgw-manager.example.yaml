@@ -16,4 +16,5 @@ mountBase: "/tank/s3/buckets"
 
 # API Server
 apiListen: "127.0.0.1:8080"
+# apiAllowRemote: true  # permit a non-loopback apiListen on a trusted network (plain HTTP)
 apiToken: "changeme-token"
