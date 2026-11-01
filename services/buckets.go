@@ -3,7 +3,9 @@ package services
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -14,6 +16,21 @@ import (
 // ErrInvalidInput marks validation failures so the API layer can answer 400
 // instead of 500.
 var ErrInvalidInput = errors.New("invalid input")
+
+// ErrBucketNotEmpty is returned when a delete would destroy objects.
+var ErrBucketNotEmpty = errors.New("bucket is not empty")
+
+// metaTmpDir is VersityGW's posix scratch dir; upstream ignores it when deciding emptiness.
+const metaTmpDir = ".sgwtmp"
+
+var quotaPattern = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?([KMGTPE](I?B)?)?$`)
+
+func validateQuota(quota string) error {
+	if !quotaPattern.MatchString(strings.ToUpper(quota)) {
+		return fmt.Errorf("%w: quota must be a size such as 500G or 2T", ErrInvalidInput)
+	}
+	return nil
+}
 
 // BucketService handles bucket-related operations
 type BucketService struct{}
@@ -83,8 +100,8 @@ func validateBucketName(name string) error {
 	if name == "" {
 		return fmt.Errorf("%w: bucket name is required", ErrInvalidInput)
 	}
-	if len(name) > 63 {
-		return fmt.Errorf("%w: bucket name is too long (max 63)", ErrInvalidInput)
+	if len(name) < 3 || len(name) > 63 {
+		return fmt.Errorf("%w: bucket name must be 3-63 characters", ErrInvalidInput)
 	}
 	for _, r := range name {
 		switch {
@@ -131,6 +148,9 @@ func (s *BucketService) CreateBucket(req models.BucketCreateRequest) error {
 	args = append(args, "-o", fmt.Sprintf("mountpoint=%s", req.Mountpoint))
 
 	if req.Quota != "" {
+		if err := validateQuota(req.Quota); err != nil {
+			return err
+		}
 		args = append(args, "-o", fmt.Sprintf("quota=%s", req.Quota))
 	}
 
@@ -145,20 +165,48 @@ func (s *BucketService) CreateBucket(req models.BucketCreateRequest) error {
 	return nil
 }
 
-// DeleteBucket deletes a ZFS bucket using zfs destroy
+// DeleteBucket destroys an empty, mounted ZFS bucket. Without -r, zfs refuses
+// datasets that still have snapshots or children.
 func (s *BucketService) DeleteBucket(name string) error {
 	if err := validateBucketName(name); err != nil {
 		return err
 	}
 	zfsPath := fmt.Sprintf("%s/%s", config.ZFSPoolBase, name)
 
-	// zfs destroy -r ensures snapshots/clones are also removed if standard
-	cmd := exec.Command("zfs", "destroy", "-r", "--", zfsPath)
-	output, err := cmd.CombinedOutput()
+	bucket, err := s.GetBucket(name)
+	if err != nil {
+		return err
+	}
+	out, err := exec.Command("zfs", "get", "-H", "-o", "value", "mounted", "--", zfsPath).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to read ZFS mount state: %w (output: %s)", err, string(out))
+	}
+	// An unmounted dataset shows an empty directory even when it holds data.
+	if strings.TrimSpace(string(out)) != "yes" {
+		return fmt.Errorf("refusing to delete %s: dataset is not mounted", zfsPath)
+	}
+	if err := checkBucketDirEmpty(bucket.Mountpoint); err != nil {
+		return err
+	}
+
+	output, err := exec.Command("zfs", "destroy", "--", zfsPath).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to delete ZFS bucket: %w (output: %s)", err, string(output))
 	}
 
+	return nil
+}
+
+func checkBucketDirEmpty(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("failed to inspect bucket directory: %w", err)
+	}
+	for _, e := range entries {
+		if e.Name() != metaTmpDir {
+			return fmt.Errorf("%w: %s contains %q", ErrBucketNotEmpty, dir, e.Name())
+		}
+	}
 	return nil
 }
 

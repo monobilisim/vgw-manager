@@ -41,8 +41,8 @@ func authMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if subtle.ConstantTimeCompare([]byte(got), []byte(config.APIToken)) != 1 {
+		got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if !ok || subtle.ConstantTimeCompare([]byte(got), []byte(config.APIToken)) != 1 {
 			writeError(w, http.StatusUnauthorized, errors.New("invalid or missing bearer token"))
 			return
 		}

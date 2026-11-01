@@ -45,19 +45,31 @@ func Provision(req ProvisionRequest) (ProvisionSummary, error) {
 	summary := ProvisionSummary{}
 
 	if req.Access == "" {
-		return summary, fmt.Errorf("access key is required (use --access)")
+		return summary, fmt.Errorf("%w: access key is required (use --access)", ErrInvalidInput)
+	}
+	if !validAccessKey(req.Access) {
+		return summary, fmt.Errorf("%w: invalid access key", ErrInvalidInput)
 	}
 	if req.Role != "admin" && req.Role != "user" && req.Role != "userplus" {
-		return summary, fmt.Errorf("role must be admin, user, or userplus")
+		return summary, fmt.Errorf("%w: role must be admin, user, or userplus", ErrInvalidInput)
 	}
 	if req.Bucket == "" {
-		return summary, fmt.Errorf("bucket name is required (use --bucket)")
+		return summary, fmt.Errorf("%w: bucket name is required (use --bucket)", ErrInvalidInput)
+	}
+	if err := validateBucketName(req.Bucket); err != nil {
+		return summary, err
 	}
 	if req.Quota == "" {
-		return summary, fmt.Errorf("quota is required (use --quota, e.g. 2T)")
+		return summary, fmt.Errorf("%w: quota is required (use --quota, e.g. 2T)", ErrInvalidInput)
+	}
+	if err := validateQuota(req.Quota); err != nil {
+		return summary, err
 	}
 	if req.Owner == "" {
 		req.Owner = req.Access
+	}
+	if !validAccessKey(req.Owner) {
+		return summary, fmt.Errorf("%w: invalid owner access key", ErrInvalidInput)
 	}
 
 	secretGenerated := false
@@ -67,7 +79,6 @@ func Provision(req ProvisionRequest) (ProvisionSummary, error) {
 	}
 
 	vgwService := NewVersityGWService()
-	bucketService := NewBucketService()
 
 	userReq := models.UserCreateRequest{
 		Access:    req.Access,
@@ -88,12 +99,11 @@ func Provision(req ProvisionRequest) (ProvisionSummary, error) {
 		Owner: req.Owner,
 	}
 
-	if err := bucketService.CreateBucket(bucketReq); err != nil {
-		return summary, fmt.Errorf("failed to create bucket: %w", err)
-	}
-
-	if err := vgwService.ChangeBucketOwner(req.Bucket, req.Owner); err != nil {
-		return summary, fmt.Errorf("failed to set bucket owner: %w", err)
+	if err := CreateBucketWithOwner(bucketReq); err != nil {
+		if rbErr := vgwService.DeleteUser(req.Access); rbErr != nil {
+			return summary, fmt.Errorf("failed to create bucket: %w (rollback failed, user %s left in place: %v)", err, req.Access, rbErr)
+		}
+		return summary, fmt.Errorf("failed to create bucket, user creation rolled back: %w", err)
 	}
 
 	summary = ProvisionSummary{

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +18,26 @@ import (
 	"github.com/monobilisim/vgw-manager/config"
 	"github.com/monobilisim/vgw-manager/models"
 )
+
+// APIError is a non-2xx answer from the VersityGW endpoint.
+type APIError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("API error (status %d): %s", e.StatusCode, e.Body)
+}
+
+func hasStatus(err error, code int) bool {
+	var apiErr *APIError
+	return errors.As(err, &apiErr) && apiErr.StatusCode == code
+}
+
+// IsNotFound reports whether err is a 404 from VersityGW (no such bucket or policy).
+func IsNotFound(err error) bool {
+	return hasStatus(err, http.StatusNotFound)
+}
 
 // VersityGWService handles VersityGW admin API operations
 type VersityGWService struct {
@@ -73,7 +94,7 @@ func (s *VersityGWService) CreateUser(req models.UserCreateRequest) error {
 		return fmt.Errorf("failed to marshal user data: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/create-user", config.EndpointURL)
+	url := buildURL("/create-user", nil)
 	httpReq, err := http.NewRequest(http.MethodPatch, url, bytes.NewBuffer(accxml))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
@@ -86,29 +107,33 @@ func (s *VersityGWService) CreateUser(req models.UserCreateRequest) error {
 	return nil
 }
 
-// UpdateUser updates an existing user via VersityGW admin API
+// mutableProps mirrors versitygw auth.MutableProps: omitted fields are left
+// unchanged, so a role or secret update keeps the user's UID/GID/project.
+type mutableProps struct {
+	XMLName xml.Name `xml:"MutableProps"`
+	Secret  *string  `xml:"Secret,omitempty"`
+	Role    string   `xml:"Role,omitempty"`
+}
+
+// UpdateUser changes the secret and/or role of an existing user via VersityGW admin API
 func (s *VersityGWService) UpdateUser(req models.UserUpdateRequest) error {
-	acc := Account{
-		Access:    req.Access,
-		Secret:    req.Secret,
-		Role:      req.Role,
-		UserID:    req.UserID,
-		GroupID:   req.GroupID,
-		ProjectID: req.ProjectID,
+	props := mutableProps{Role: req.Role}
+	if req.Secret != "" {
+		props.Secret = &req.Secret
 	}
 
-	accxml, err := xml.Marshal(acc)
+	propsXML, err := xml.Marshal(props)
 	if err != nil {
 		return fmt.Errorf("failed to marshal user data: %w", err)
 	}
 
 	url := buildURL("/update-user", map[string]string{"access": req.Access})
-	httpReq, err := http.NewRequest(http.MethodPatch, url, bytes.NewBuffer(accxml))
+	httpReq, err := http.NewRequest(http.MethodPatch, url, bytes.NewBuffer(propsXML))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	if _, err := s.signAndSend(httpReq, accxml); err != nil {
+	if _, err := s.signAndSend(httpReq, propsXML); err != nil {
 		return err
 	}
 
@@ -153,13 +178,13 @@ func (s *VersityGWService) signAndSend(httpReq *http.Request, payload []byte) ([
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
 	if err != nil {
 		return nil, err
 	}
 
 	if resp.StatusCode >= 400 {
-		return body, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
+		return body, &APIError{StatusCode: resp.StatusCode, Body: string(body)}
 	}
 
 	return body, nil
@@ -179,36 +204,8 @@ func (s *VersityGWService) ChangeBucketOwner(bucket, owner string) error {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	signer := v4.NewSigner()
-	hashedPayload := sha256.Sum256([]byte{})
-	hexPayload := hex.EncodeToString(hashedPayload[:])
-
-	httpReq.Header.Set("X-Amz-Content-Sha256", hexPayload)
-
-	err = signer.SignHTTP(httpReq.Context(), aws.Credentials{
-		AccessKeyID:     config.AdminAccess,
-		SecretAccessKey: config.AdminSecret,
-	}, httpReq, hexPayload, "s3", config.Region, time.Now())
-	if err != nil {
-		return fmt.Errorf("failed to sign request: %w", err)
-	}
-
-	resp, err := s.client.Do(httpReq)
-	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	return nil
+	_, err = s.signAndSend(httpReq, []byte{})
+	return err
 }
 
 // SetBucketPolicy sets the S3 bucket policy
@@ -315,6 +312,9 @@ func (s *VersityGWService) DeleteBucket(bucket string) error {
 
 // GetBucketPolicy retrieves the policy of a bucket
 func (s *VersityGWService) GetBucketPolicy(bucket string) (string, error) {
+	if err := validateBucketName(bucket); err != nil {
+		return "", err
+	}
 	url := fmt.Sprintf("%s/%s?policy", config.EndpointURL, bucket)
 	httpReq, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
@@ -366,6 +366,9 @@ func (s *VersityGWService) ListBuckets() ([]BucketInfo, error) {
 
 // GetBucketOwner retrieves the true bucket owner by checking the ACL
 func (s *VersityGWService) GetBucketOwner(bucket string) (string, error) {
+	if err := validateBucketName(bucket); err != nil {
+		return "", err
+	}
 	url := fmt.Sprintf("%s/%s?acl", config.EndpointURL, bucket)
 	httpReq, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {

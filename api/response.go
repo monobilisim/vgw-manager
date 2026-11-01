@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 
@@ -46,12 +47,10 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(v); err != nil {
-		// Ignore EOF for optional bodies (e.g. make-public with no body).
-		if err.Error() != "EOF" {
-			writeError(w, http.StatusBadRequest, err)
-			return false
-		}
+	if err := dec.Decode(v); err != nil && !errors.Is(err, io.EOF) {
+		// io.EOF means an empty body, which optional bodies (make-public) allow.
+		writeError(w, http.StatusBadRequest, err)
+		return false
 	}
 	return true
 }

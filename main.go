@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -117,11 +118,10 @@ func main() {
 
 	// Initialize Services
 	vgwService := services.NewVersityGWService()
-	bucketService := services.NewBucketService()
 
 	if *serve {
-		if config.APIToken == "" {
-			fmt.Fprintln(os.Stderr, "Error: apiToken is required when serving the API (set apiToken in config or VGW_API_TOKEN env). This service runs as root and writes to ZFS.")
+		if len(config.APIToken) < 32 {
+			fmt.Fprintln(os.Stderr, "Error: apiToken of at least 32 characters is required when serving the API (set apiToken in config or VGW_API_TOKEN env). This service runs as root and writes to ZFS.")
 			os.Exit(1)
 		}
 
@@ -131,6 +131,11 @@ func main() {
 		}
 		if addr == "" {
 			addr = "127.0.0.1:8080"
+		}
+		// The API speaks plain HTTP with a bearer token, so it must stay on loopback.
+		if host, _, err := net.SplitHostPort(addr); err != nil || (host != "localhost" && !net.ParseIP(host).IsLoopback()) {
+			fmt.Fprintf(os.Stderr, "Error: listen address %q is not a loopback address; the API has no TLS, put a TLS reverse proxy in front instead.\n", addr)
+			os.Exit(1)
 		}
 
 		srv := api.NewServer(version)
@@ -211,20 +216,13 @@ func main() {
 			Owner: owner,
 		}
 
-		// Create ZFS dataset
-		if err := bucketService.CreateBucket(req); err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating ZFS bucket: %v\n", err)
+		if err := services.CreateBucketWithOwner(req); err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating bucket: %v\n", err)
 			os.Exit(1)
 		}
-
-		// Set Owner if specified
 		if owner != "" {
-			if err := vgwService.ChangeBucketOwner(*bucketName, owner); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: Bucket created but failed to set owner: %v\n", err)
-			} else {
-				fmt.Printf("Bucket '%s' created with owner '%s'.\n", *bucketName, owner)
-				return
-			}
+			fmt.Printf("Bucket '%s' created with owner '%s'.\n", *bucketName, owner)
+			return
 		}
 		fmt.Printf("Bucket '%s' created.\n", *bucketName)
 		return
@@ -236,7 +234,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		via, err := services.DeleteBucketWithFallback(*bucketName)
+		via, err := services.RemoveBucket(*bucketName)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error deleting bucket: %v\n", err)
 			os.Exit(1)

@@ -27,8 +27,6 @@ var (
 
 	// Defaults used when no file/env is provided.
 	defaultConfig = Config{
-		AdminAccess:   "changeme-access",
-		AdminSecret:   "changeme-secret",
 		EndpointURL:   "http://localhost:7070",
 		Region:        "local",
 		UsersJSONPath: "/tank/s3/accounts/users.json",
@@ -37,7 +35,7 @@ var (
 		APIListen:     "127.0.0.1:8080",
 	}
 
-	// Exported values used across the app (populated in init).
+	// Exported values used across the app (populated by Load).
 	AdminAccess   string
 	AdminSecret   string
 	EndpointURL   string
@@ -48,11 +46,6 @@ var (
 	APIListen     string
 	APIToken      string
 )
-
-func init() {
-	// Load defaults without failing hard if config is absent.
-	_ = Load("")
-}
 
 // Load applies configuration from the provided path, environment variables, and defaults.
 // The search order for the file is:
@@ -97,6 +90,9 @@ func Load(configPath string) error {
 
 // Validate checks if the configuration values are valid.
 func (c *Config) Validate() error {
+	if c.AdminAccess == "" || c.AdminSecret == "" {
+		return fmt.Errorf("adminAccess and adminSecret are required")
+	}
 	if c.EndpointURL == "" {
 		return fmt.Errorf("endpointURL is required")
 	}
