@@ -39,3 +39,6 @@ Thumbs.db
 
 # Local agent session state
 .sisyphus/
+
+# Release output
+dist/
