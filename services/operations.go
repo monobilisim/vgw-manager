@@ -2,6 +2,7 @@ package services
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -167,6 +168,9 @@ func RemoveBucket(name string) (string, error) {
 	vgwService := NewVersityGWService()
 
 	if _, err := bucketService.GetBucket(name); err != nil {
+		if !errors.Is(err, ErrBucketNotFound) {
+			return "", err
+		}
 		// Not a dataset here: VersityGW itself refuses non-empty buckets with 409.
 		if err := vgwService.DeleteBucket(name); err != nil {
 			if hasStatus(err, http.StatusConflict) {

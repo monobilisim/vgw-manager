@@ -20,6 +20,9 @@ var ErrInvalidInput = errors.New("invalid input")
 // ErrBucketNotEmpty is returned when a delete would destroy objects.
 var ErrBucketNotEmpty = errors.New("bucket is not empty")
 
+// ErrBucketNotFound means no ZFS dataset exists for the bucket.
+var ErrBucketNotFound = errors.New("bucket not found")
+
 // metaTmpDir is VersityGW's posix scratch dir; upstream ignores it when deciding emptiness.
 const metaTmpDir = ".sgwtmp"
 
@@ -223,5 +226,5 @@ func (s *BucketService) GetBucket(name string) (*models.Bucket, error) {
 		}
 	}
 
-	return nil, fmt.Errorf("bucket not found: %s", name)
+	return nil, fmt.Errorf("%w: %s", ErrBucketNotFound, name)
 }
